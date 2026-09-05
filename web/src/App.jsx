@@ -5,6 +5,7 @@ import Award from "./pages/Award.jsx";
 import Instruments from "./pages/Instruments.jsx";
 import Login from "./pages/Login.jsx";
 import MyWeek from "./pages/MyWeek.jsx";
+import Password from "./pages/Password.jsx";
 import People from "./pages/People.jsx";
 import Portfolio from "./pages/Portfolio.jsx";
 
@@ -42,6 +43,7 @@ function Shell({ children }) {
         <strong>Ledger</strong>
         <nav>
           <NavLink to="/me/week">My week</NavLink>
+          <NavLink to="/me/password">Password</NavLink>
           {isAdmin ? <NavLink to="/approvals">Approvals</NavLink> : null}
           {isAdmin ? <NavLink to="/portfolio">Awards</NavLink> : null}
           {isAdmin ? <NavLink to="/people">People</NavLink> : null}
@@ -69,6 +71,16 @@ export default function App() {
           <RequireAuth>
             <Shell>
               <MyWeek />
+            </Shell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/me/password"
+        element={
+          <RequireAuth>
+            <Shell>
+              <Password />
             </Shell>
           </RequireAuth>
         }

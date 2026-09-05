@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { api, getToken, setSession } from "../api.js";
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const notice = location.state && location.state.notice;
 
   if (getToken()) {
     return <Navigate to="/me/week" replace />;
@@ -32,6 +34,7 @@ export default function Login() {
       <div className="card" style={{ maxWidth: 360, margin: "3rem auto" }}>
         <h1>Ledger</h1>
         <p className="muted">Sign in to log time. Dollars stay on admin screens.</p>
+        {notice ? <p>{notice}</p> : null}
         <form onSubmit={onSubmit}>
           <label htmlFor="username">Username</label>
           <input
