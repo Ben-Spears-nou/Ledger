@@ -29,7 +29,7 @@ bottom so they are not forgotten; do not implement them until 4 is Done.
   `config.py`, `db/`, `models/`, `schemas/`, `api/`.
 - Load configuration from `.env` (copy `.env.example`).
 - Add a `Makefile` (or `tasks.py`) with `install`, `lint`, `test`, `run`,
-  `db-init`.
+  `db-init` (`build-ui` and `backup` were added later).
 - Add `.gitignore` covering `.env*`, `venv/`, `__pycache__/`, `data/`,
   local SQLite files, and node_modules (for the later UI).
 - Scaffold an empty React + Vite app under `web/` **or** defer the UI folder
@@ -532,6 +532,35 @@ instrument_share
 
 ---
 
+## LAN browser access (D28) — not a numbered phase
+
+After Phase 4, teammates need one URL on the host machine. This is not
+Phase 5–7.
+
+**Tasks**
+
+- Record D28. Default bind stays `127.0.0.1`.
+- `python tasks.py build-ui` runs `npm run build` in `web/`.
+- FastAPI serves `web/dist/` when `index.html` exists: HTML navigation
+  gets the SPA; JSON `fetch` still hits the API (same paths as Vite’s
+  `bypass` for `text/html`).
+- `tasks.py run` reads `LEDGER_API_HOST` / `LEDGER_API_PORT`. Refuse
+  non-loopback bind if `LEDGER_SECRET_KEY` is the shipped default.
+  `--reload` only on loopback.
+- UI `fetch` uses `window.location.origin` unless `VITE_API_URL` is set.
+- README: build UI, opt-in `0.0.0.0`, firewall, URL `http://<host>:8000`.
+
+**Acceptance criteria**
+
+- Default `LEDGER_API_HOST` is `127.0.0.1`; tests stay green without a
+  built UI.
+- With a fixture `web/dist`, `GET /login` with `Accept: text/html` is
+  the SPA; `GET /health` stays JSON; JSON `GET /awards` is still the API.
+- `python tasks.py lint` and `python tasks.py test` stay green.
+- Phase 5 is still “do not build” in this document.
+
+---
+
 ## Later phases (do not build yet)
 
 Recorded so Phase 4 does not “helpfully” grow into them.
@@ -546,6 +575,7 @@ UI map for orientation (implement screens only when the phase needs them):
 
 - `/login` — Phase 2.5
 - `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
+- `/me/password` — change password (Phase 2.5 / D20)
 - `/portfolio` — award cards (Phase 2.5 optional)
 - `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4)
 - `/approvals` — submitted time (Phase 2.5)

@@ -6,6 +6,7 @@ Served as ``uvicorn ledger.api.main:app``. Interactive docs live at ``/docs``.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,7 @@ from ledger.api.routers.schedule import (
     tasks_router,
 )
 from ledger.api.routers.time import approvals_router, me_router, rates_router
+from ledger.api.spa import DEFAULT_WEB_DIST, install_spa
 from ledger.config import DEFAULT_SECRET_KEY, get_settings
 
 _LOCAL_UI_ORIGINS = (
@@ -44,8 +46,8 @@ def warn_if_default_secret() -> None:
         logger.warning("LEDGER_SECRET_KEY is the shipped default; set a new value before sharing.")
 
 
-def create_app() -> FastAPI:
-    """Build the Ledger API."""
+def create_app(web_dist: Path | None = None) -> FastAPI:
+    """Build the Ledger API. ``web_dist`` defaults to ``web/dist`` (D28)."""
     warn_if_default_secret()
     application = FastAPI(
         title="Ledger",
@@ -82,6 +84,7 @@ def create_app() -> FastAPI:
         """Liveness probe."""
         return {"status": "ok", "version": __version__}
 
+    install_spa(application, DEFAULT_WEB_DIST if web_dist is None else web_dist)
     return application
 
 

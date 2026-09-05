@@ -226,7 +226,8 @@ later:
 
 Also out of v1: payroll/tax, depreciation engine, bank feeds, AI receipt
 coding, agency e-file, invoice *submission*, multi-company UI, exploding
-labor into fringe/OH/G&A journal lines, Postgres/HTTPS/SSO.
+labor into fringe/OH/G&A journal lines, Postgres/HTTPS/SSO. Opt-in LAN
+bind and same-origin UI are D28; they are not a cloud rewrite.
 
 ---
 
@@ -236,6 +237,7 @@ Phases 0–2 were API-first. Phase 2.5 adds `web/` (Vite + React): `/login`,
 `/me/week`, `/approvals`, `/awards/:id`, optional `/portfolio`. The UI talks
 only to the FastAPI HTTP API. Bearer token lives in `sessionStorage`, not
 the URL. `/me/week` never shows dollars, even for an admin on that route.
+Vite on `:5173` is local development. Teammates use D28 (one origin).
 
 My week renders award + hours (and, in Phase 3, optional task). Unknown
 line fields stay ignored so later phases remain additive. Phase 4 may add
@@ -425,3 +427,21 @@ Posting the instrument posts those commitments.
 `cents_i = amount_cents × share_pct // 10000` for every share except the
 last; the last share is `amount_cents − sum(previous)` so posted charges
 sum to the instrument total. Never float.
+
+---
+
+## D28 — One machine serves the site; LAN bind is opt-in
+
+Teammates open Ledger in a browser on their own computers. They do not
+install Node or run Vite. `python tasks.py build-ui` writes `web/dist/`.
+FastAPI serves that folder on the same origin as the API. Browser
+navigation sends `Accept: text/html` and gets `index.html`; `fetch` from
+the UI sends `Accept: application/json` and hits the API. Default
+`api.js` calls are same-origin (no hardcoded `127.0.0.1:8000`).
+
+`LEDGER_API_HOST` defaults to `127.0.0.1`. Sharing requires
+`LEDGER_API_HOST=0.0.0.0` (or another non-loopback bind). `tasks.py run`
+refuses a non-loopback bind while `LEDGER_SECRET_KEY` is still the
+shipped default. HTTPS and SSO stay out of v1 (D13). SQLite stays on the
+host’s local disk (D15). Windows Firewall and “stay up when I log off”
+are OS work, not a product rewrite.

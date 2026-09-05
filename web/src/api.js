@@ -1,10 +1,10 @@
 const TOKEN_KEY = "ledger.token";
 const USER_KEY = "ledger.user";
 
-function apiBase() {
+function apiOrigin() {
   const configured = import.meta.env.VITE_API_URL;
   if (configured === "" || configured === undefined) {
-    return "http://127.0.0.1:8000";
+    return window.location.origin;
   }
   return configured.replace(/\/$/, "");
 }
@@ -36,7 +36,7 @@ export function clearSession() {
 }
 
 export async function api(path, { method = "GET", body, query } = {}) {
-  const url = new URL(apiBase() + path);
+  const url = new URL(path, apiOrigin());
   if (query) {
     Object.entries(query).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== "") {
