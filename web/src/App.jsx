@@ -2,6 +2,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom"
 import { clearSession, getToken, getUser } from "./api.js";
 import Approvals from "./pages/Approvals.jsx";
 import Award from "./pages/Award.jsx";
+import Compliance from "./pages/Compliance.jsx";
 import Instruments from "./pages/Instruments.jsx";
 import Login from "./pages/Login.jsx";
 import MyWeek from "./pages/MyWeek.jsx";
@@ -48,6 +49,7 @@ function Shell({ children }) {
           {isAdmin ? <NavLink to="/portfolio">Awards</NavLink> : null}
           {isAdmin ? <NavLink to="/people">People</NavLink> : null}
           {isAdmin ? <NavLink to="/instruments">Instruments</NavLink> : null}
+          {isAdmin ? <NavLink to="/compliance">Compliance</NavLink> : null}
         </nav>
         <span>
           {user ? user.display_name : ""}{" "}
@@ -121,6 +123,16 @@ export default function App() {
           <RequireAdmin>
             <Shell>
               <Instruments />
+            </Shell>
+          </RequireAdmin>
+        }
+      />
+      <Route
+        path="/compliance"
+        element={
+          <RequireAdmin>
+            <Shell>
+              <Compliance />
             </Shell>
           </RequireAdmin>
         }

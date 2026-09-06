@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db
 from ledger.models import UserAccount
+from ledger.models.documents import ComplianceKind, ComplianceStatus, DocumentKind
 from ledger.models.lookups import (
     Agency,
     AwardInstrument,
@@ -107,5 +108,19 @@ def all_lookups(
             for row in budget_templates
         ],
         "agencies": [row.agency_name for row in agencies],
+        "document_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(DocumentKind).order_by(DocumentKind.kind_code))
+        ],
+        "compliance_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(ComplianceKind).order_by(ComplianceKind.kind_code))
+        ],
+        "compliance_statuses": [
+            {"status_code": row.status_code, "description": row.description}
+            for row in session.scalars(
+                select(ComplianceStatus).order_by(ComplianceStatus.status_code)
+            )
+        ],
         "time_codes": _time_codes(session),
     }

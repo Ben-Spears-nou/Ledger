@@ -17,6 +17,7 @@ from ledger.db.engine import create_db_engine, resolve_db_url
 from ledger.db.sql import (
     SchemaObjects,
     as_idempotent_seed,
+    is_create_index,
     is_seed_statement,
     iter_sql_statements,
 )
@@ -68,6 +69,8 @@ def ensure_share_readiness_schema(connection: Connection) -> None:
     """
     rows = connection.exec_driver_sql("PRAGMA table_info(user_account)").fetchall()
     names = {row[1] for row in rows}
+    if not names:
+        return
     if "password_changed_at" not in names:
         connection.exec_driver_sql("ALTER TABLE user_account ADD COLUMN password_changed_at TEXT")
 
@@ -92,6 +95,30 @@ def ensure_phase3_schema(connection: Connection) -> None:
 def is_initialized(engine: Engine) -> bool:
     """Report whether the core award table already exists."""
     return "award" in existing_objects(engine).tables
+
+
+def apply_schema_sql(connection: Connection, script: str) -> int:
+    """Create tables/views, ALTER existing columns, then indexes.
+
+    ``CREATE TABLE IF NOT EXISTS`` will not add ``timesheet_line.task_id``
+    on a Phase 2 database. Indexes that mention that column must wait
+    until ``ensure_phase3_schema`` runs.
+    """
+    indexes: list[str] = []
+    seeded = 0
+    for statement in iter_sql_statements(script):
+        if is_seed_statement(statement):
+            connection.exec_driver_sql(as_idempotent_seed(statement))
+            seeded += 1
+        elif is_create_index(statement):
+            indexes.append(statement)
+        else:
+            connection.exec_driver_sql(statement)
+    ensure_share_readiness_schema(connection)
+    ensure_phase3_schema(connection)
+    for statement in indexes:
+        connection.exec_driver_sql(statement)
+    return seeded
 
 
 def _require_sqlite(engine: Engine) -> None:
@@ -124,16 +151,8 @@ def init_db(
         _drop_all(engine)
 
     created = not is_initialized(engine)
-    seeded = 0
     with engine.begin() as connection:
-        for statement in iter_sql_statements(script):
-            if is_seed_statement(statement):
-                connection.exec_driver_sql(as_idempotent_seed(statement))
-                seeded += 1
-            else:
-                connection.exec_driver_sql(statement)
-        ensure_share_readiness_schema(connection)
-        ensure_phase3_schema(connection)
+        seeded = apply_schema_sql(connection, script)
 
     if seed_admin:
         from ledger.db.seed import ensure_bootstrap_admin

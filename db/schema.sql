@@ -1,4 +1,4 @@
--- Ledger Phase 1–4 schema. SQLite 3.31+.
+-- Ledger Phase 1–5 schema. SQLite 3.31+.
 -- Money is integer cents. Percents are integer hundredths of a percent
 -- (3215 = 32.15%; multiplier is 1 + pct/10000). See docs/SCHEMA_NOTES.md.
 -- db/schema.sql is the source of truth. Do not invent tables here.
@@ -109,6 +109,41 @@ CREATE TABLE IF NOT EXISTS agency (
     agency_name  TEXT PRIMARY KEY,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS document_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO document_kind (kind_code, description) VALUES
+    ('contract',       'Award / contract / grant document'),
+    ('mod',            'Modification or amendment'),
+    ('report',         'Technical or progress report'),
+    ('invoice',        'Invoice or voucher'),
+    ('correspondence', 'Letter or email record'),
+    ('other',          'Other');
+
+CREATE TABLE IF NOT EXISTS compliance_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO compliance_kind (kind_code, description) VALUES
+    ('technical_report', 'Technical / progress report due'),
+    ('financial_report', 'Financial report due'),
+    ('pop_end',          'Period of performance end'),
+    ('irb',              'Human subjects / IRB'),
+    ('iacuc',            'Animal care / IACUC'),
+    ('property',         'Property or equipment report'),
+    ('invoice',          'Invoice due to the sponsor'),
+    ('other',            'Other obligation');
+
+CREATE TABLE IF NOT EXISTS compliance_status (
+    status_code  TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO compliance_status (status_code, description) VALUES
+    ('open',   'Not finished'),
+    ('done',   'Completed'),
+    ('waived', 'No longer required');
 
 CREATE TABLE IF NOT EXISTS rate_policy_template (
     template_code      TEXT PRIMARY KEY,
@@ -631,3 +666,42 @@ LEFT JOIN (
       AND c.exercised_at IS NULL
     GROUP BY c.award_id
 ) AS opts ON opts.award_id = a.award_id;
+
+-- =====================================================================
+-- Documents and compliance (Phase 5). Files are on local disk (D29).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS document (
+    document_id         INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES document_kind (kind_code),
+    title               TEXT NOT NULL,
+    document_date       TEXT,
+    notes               TEXT,
+    original_filename   TEXT,
+    stored_ext          TEXT,
+    content_type        TEXT,
+    size_bytes          INTEGER,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE TABLE IF NOT EXISTS compliance_item (
+    compliance_item_id  INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES compliance_kind (kind_code),
+    title               TEXT NOT NULL,
+    due_date            TEXT NOT NULL,
+    status_code         TEXT NOT NULL REFERENCES compliance_status (status_code),
+    notes               TEXT,
+    completed_at        TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_document_award
+    ON document (award_id);
+CREATE INDEX IF NOT EXISTS ix_compliance_award_due
+    ON compliance_item (award_id, due_date);
+CREATE INDEX IF NOT EXISTS ix_compliance_due
+    ON compliance_item (due_date);

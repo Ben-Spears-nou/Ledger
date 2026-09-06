@@ -95,7 +95,7 @@ does not hide earlier labor.
 |---|---|
 | `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI/CSV. |
 
-Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create.
+Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status.
 
 ---
 
@@ -124,3 +124,18 @@ Assignment and capacity hours are integer hundredths of an hour, like
 
 `timesheet_line.task_id` must belong to the line’s `award_id` when both are
 set. Non-award time codes cannot carry a task.
+
+---
+
+## Documents and compliance (Phase 5)
+
+| Table | Notes |
+|---|---|
+| `document_kind` | Lookup: contract, mod, report, invoice, correspondence, other |
+| `document` | Award register row. Optional file on local disk (D29), not a BLOB |
+| `compliance_kind` | Lookup: technical_report, financial_report, pop_end, irb, iacuc, property, invoice, other |
+| `compliance_status` | `open`, `done`, `waived` |
+| `compliance_item` | Due date on an award. Not remaining money (D30) |
+
+Files: `{data_dir}/documents/{award_id}/{document_id}{ext}`. Max 20 MiB.
+Admin-only. Remaining views unchanged.

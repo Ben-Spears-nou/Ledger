@@ -5,6 +5,13 @@ from ledger.models.awards import Award, AwardMod, AwardRateOverride, AwardRatePo
 from ledger.models.base import Base
 from ledger.models.budgets import BudgetLine, BudgetVersion
 from ledger.models.commitments import Commitment, Instrument, InstrumentShare
+from ledger.models.documents import (
+    ComplianceItem,
+    ComplianceKind,
+    ComplianceStatus,
+    Document,
+    DocumentKind,
+)
 from ledger.models.identity import Person, PersonRate, UserAccount
 from ledger.models.lookups import (
     Agency,
@@ -44,7 +51,12 @@ __all__ = [
     "Charge",
     "Clin",
     "Commitment",
+    "ComplianceItem",
+    "ComplianceKind",
+    "ComplianceStatus",
     "CostBasis",
+    "Document",
+    "DocumentKind",
     "Instrument",
     "InstrumentShare",
     "Organization",

@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D27). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D31). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,8 +14,8 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–4.** Phases 5–7 stay listed at the
-bottom so they are not forgotten; do not implement them until 4 is Done.
+**This document specifies Phases 0–5.** Phases 6–7 stay listed at the
+bottom so they are not forgotten; do not implement them until 5 is Done.
 
 ---
 
@@ -528,14 +528,14 @@ instrument_share
 - Closed/pipeline awards reject new purchases.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–3.
-- Phase 5 is still “do not build” in this document.
+- Phase 5 documents wait for this phase to be Done.
 
 ---
 
 ## LAN browser access (D28) — not a numbered phase
 
 After Phase 4, teammates need one URL on the host machine. This is not
-Phase 5–7.
+Phase 6–7.
 
 **Tasks**
 
@@ -557,17 +557,88 @@ Phase 5–7.
 - With a fixture `web/dist`, `GET /login` with `Accept: text/html` is
   the SPA; `GET /health` stays JSON; JSON `GET /awards` is still the API.
 - `python tasks.py lint` and `python tasks.py test` stay green.
-- Phase 5 is still “do not build” in this document.
+- Phase 6 is still “do not build” in this document.
+
+---
+
+## Phase 5 — Documents, award files, compliance dates
+
+A register of award documents with optional files on local disk, plus
+dated compliance obligations (D29–D31). Do not build Phase 6–7 here.
+Not a document-management product. Files are not remaining money (D4).
+
+**Tasks**
+
+### Schema
+
+- Propose D29–D31 in `DECISIONS.md`, then add tables to `db/schema.sql`.
+  Alembic `0006_phase5_documents`. Do not change remaining views.
+- `db-init` must apply `CREATE INDEX` **after** `ensure_phase3_schema` so
+  existing `timesheet_line` rows without `task_id` can be altered first.
+- New objects only:
+
+```
+document_kind
+compliance_kind
+compliance_status
+document
+compliance_item
+```
+
+### Documents
+
+- Admin `POST /awards/{id}/documents` JSON: `kind_code`, `title`, optional
+  `document_date`, `notes`. Pipeline and closed awards are allowed.
+- Admin `POST /documents/{id}/file` multipart field `file`. Store under
+  `LEDGER_DATA_DIR/documents/{award_id}/`. 20 MiB cap. Suffix whitelist
+  (D29). Replacing a file is a new document row, not an overwrite (D5);
+  v1: one file per document; second upload is 409.
+- Admin `GET /awards/{id}/documents`, `GET /documents/{id}`,
+  `GET /documents/{id}/file` (authenticated download).
+- Employees 403. D18 card unchanged. Remaining cents unchanged.
+
+### Compliance
+
+- Admin `POST /awards/{id}/compliance`: `kind_code`, `title`, `due_date`,
+  optional `notes`. Status starts `open`.
+- Admin `PATCH /compliance/{id}`: `status_code` (`open` | `done` |
+  `waived`) and optional `notes`. `done` sets `completed_at`.
+- Admin `GET /awards/{id}/compliance` and `GET /compliance` (optional
+  `due_from`, `due_to`, `status_code`, `award_id`) ordered by `due_date`.
+- Employees 403. No email, no 75% burn alerts (Phase 6).
+
+### API / UI (minimum)
+
+- `/awards/:id` — admin: document list, add metadata, attach file,
+  download; compliance list, add due date, mark done/waived.
+- `/compliance` — admin calendar across awards.
+- Vite proxy `/documents`, `/compliance` (HTML bypass for `/compliance`).
+- Lookups: `document_kinds`, `compliance_kinds`, `compliance_statuses`
+  (admin `/lookups` only).
+
+**Acceptance criteria**
+
+- ORM matches `schema.sql`; Alembic head is `0006_phase5_documents`.
+- Document without file lists; upload then download returns the bytes.
+- Oversize or bad suffix is 400; second file on the same row is 409.
+- Employee 403 on documents, file, and compliance. D18 keys unchanged.
+- Creating a document does not change `remaining_approved_cents`.
+- Compliance `done` sets `completed_at`; calendar `GET /compliance`
+  returns the item by `due_date`.
+- `db-init` succeeds on a pre-Phase-3 `timesheet_line` (no `task_id`
+  column) without `--force`.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–4.
+- Phase 6 is still “do not build” in this document.
 
 ---
 
 ## Later phases (do not build yet)
 
-Recorded so Phase 4 does not “helpfully” grow into them.
+Recorded so Phase 5 does not “helpfully” grow into them.
 
 | Phase | Scope |
 |---|---|
-| 5 | Document register, award-scoped files, compliance dates |
 | 6 | Pipeline nodes, burn/EAC/runway, 75% and PoP alerts |
 | 7 | Audit log UI, convenience CSV of charges — still not QuickBooks |
 
@@ -577,8 +648,9 @@ UI map for orientation (implement screens only when the phase needs them):
 - `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
 - `/me/password` — change password (Phase 2.5 / D20)
 - `/portfolio` — award cards (Phase 2.5 optional)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5)
 - `/approvals` — submitted time (Phase 2.5)
 - `/people` — capacity and assignments (Phase 3)
 - `/instruments` — shared costs and splits (Phase 4)
+- `/compliance` — due dates across awards (Phase 5)
 - `/admin` — users, categories, templates

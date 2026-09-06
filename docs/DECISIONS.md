@@ -5,8 +5,8 @@ does not undo them. Propose changes here before editing `db/schema.sql` or
 adding dependencies.
 
 Ledger is an SBIR/STTR **award operations** tool: awards, contract-specific
-labor costing, self-service time, remaining budget, and (later) schedule,
-instruments, and documents. It is not ALTUM and must not live in that repo.
+labor costing, self-service time, remaining budget, schedule, instruments,
+and documents. It is not ALTUM and must not live in that repo.
 
 ---
 
@@ -219,10 +219,10 @@ skip 2.5. Phase 3 is tasks/assignments/capacity. Phase 4 is purchases,
 travel, commitments, and instrument splits. After 4 is Done, these remain
 later:
 
-- Phase 5 — Documents, compliance calendar
 - Phase 6 — Pipeline nodes, burn/runway, 75% and PoP alerts
 - Phase 7 — Audit *UI* and CSV dump (not books). The `audit_event` table
-  itself is Phase 2.5 (D19).
+  itself is Phase 2.5 (D19). Phase 5 (documents and compliance dates) is
+  D29–D31.
 
 Also out of v1: payroll/tax, depreciation engine, bank feeds, AI receipt
 coding, agency e-file, invoice *submission*, multi-company UI, exploding
@@ -241,8 +241,9 @@ Vite on `:5173` is local development. Teammates use D28 (one origin).
 
 My week renders award + hours (and, in Phase 3, optional task). Unknown
 line fields stay ignored so later phases remain additive. Phase 4 may add
-purchases/travel on `/awards/:id` and `/instruments`. Do not add
-Phase 5–7 screens.
+purchases/travel on `/awards/:id` and `/instruments`. Phase 5 may add
+documents on `/awards/:id` and a compliance calendar. Do not add
+Phase 6–7 screens.
 
 ---
 
@@ -292,7 +293,8 @@ One `audit_event` table: who, when, action, entity_type, entity_id,
 optional JSON detail. Write events for: login failure (never store the
 password), password change, person/rate create, award create, policy
 revision, week submit / approve / return, task create, assignment create,
-capacity create, commitment create / post / cancel, instrument create. Do not
+capacity create, commitment create / post / cancel, instrument create,
+document create / file, compliance create / status. Do not
 update or delete audit rows. `GET /admin/audit` is admin-only JSON.
 
 ---
@@ -445,3 +447,55 @@ refuses a non-loopback bind while `LEDGER_SECRET_KEY` is still the
 shipped default. HTTPS and SSO stay out of v1 (D13). SQLite stays on the
 host’s local disk (D15). Windows Firewall and “stay up when I log off”
 are OS work, not a product rewrite.
+
+---
+
+## D29 — Documents are a register plus optional local files
+
+A document is metadata on one `award` (kind, title, optional date, notes).
+A file is optional. Files live under the host data dir
+(`runtime_dir()/documents/{award_id}/{document_id}{ext}`), not in SQLite
+and not on a UNC share (D15). No S3, SharePoint, or versioning: a new
+fact is a new row (D5). Max upload 20 MiB. Allowed suffixes: pdf, doc,
+docx, xls, xlsx, png, jpg, jpeg, txt, csv, zip.
+
+Proposed tables:
+
+- `document_kind` — lookup (`contract`, `mod`, `report`, `invoice`,
+  `correspondence`, `other`)
+- `document` — `document_id`, `award_id`, `kind_code`, `title`,
+  `document_date` (nullable ISO), `notes`, `original_filename` (nullable),
+  `stored_ext` (nullable), `content_type` (nullable), `size_bytes`
+  (nullable), `created_at`, `created_by`
+
+Admin-only. Employees 403. D18 award cards unchanged. Remaining $ is
+unchanged. Closed and pipeline awards still accept documents (archive).
+
+---
+
+## D30 — Compliance items are dated obligations, not money
+
+A compliance item is a due date on one award (report, PoP end, IRB,
+invoice, other). It does not move remaining, committed, or actual (D4).
+Phase 6 burn/75%/PoP *alerts* stay later. Status is `open` | `done` |
+`waived`. Marking `done` sets `completed_at`; it does not delete the row.
+
+Proposed tables:
+
+- `compliance_kind` — lookup
+- `compliance_status` — `open`, `done`, `waived`
+- `compliance_item` — `compliance_item_id`, `award_id`, `kind_code`,
+  `title`, `due_date`, `status_code`, `notes`, `completed_at`,
+  `created_at`, `created_by`
+
+Admin-only. `GET /compliance` lists across awards (calendar). Employees
+403.
+
+---
+
+## D31 — Document and compliance writes are audited; files are not tokens
+
+Audit `document_create`, `document_file`, `compliance_create`,
+`compliance_status` (D19). Download uses the same bearer token as other
+admin GETs; do not put the token in the file URL. No public/unauthenticated
+file path.

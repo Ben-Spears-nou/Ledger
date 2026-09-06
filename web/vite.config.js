@@ -28,6 +28,8 @@ export default defineConfig({
       "/travel": API,
       "/commitments": API,
       "/instruments": { target: API, bypass: spaPage },
+      "/documents": API,
+      "/compliance": { target: API, bypass: spaPage },
       "/health": API,
     },
   },

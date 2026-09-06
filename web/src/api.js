@@ -75,6 +75,53 @@ export async function api(path, { method = "GET", body, query } = {}) {
   return data;
 }
 
+export async function uploadDocumentFile(documentId, file) {
+  const url = new URL(`/documents/${documentId}/file`, apiOrigin());
+  const headers = { Accept: "application/json" };
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(url, { method: "POST", headers, body });
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { detail: text };
+    }
+  }
+  if (!response.ok) {
+    const detail = data && data.detail ? data.detail : response.statusText;
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return data;
+}
+
+export async function downloadDocumentFile(documentId, filename) {
+  const url = new URL(`/documents/${documentId}/file`, apiOrigin());
+  const headers = { Accept: "application/octet-stream" };
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename || "download";
+  link.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export function formatCents(cents) {
   return (Number(cents || 0) / 100).toLocaleString(undefined, {
     style: "currency",

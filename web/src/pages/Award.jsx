@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, formatCents, todayIso } from "../api.js";
+import { api, downloadDocumentFile, formatCents, todayIso, uploadDocumentFile } from "../api.js";
 
 function dollarsToCents(value) {
   return Math.round(Number(value) * 100);
@@ -17,6 +17,24 @@ export default function Award() {
   const [taskForm, setTaskForm] = useState({ short_code: "", title: "" });
   const [commitments, setCommitments] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [compliance, setCompliance] = useState([]);
+  const [documentKinds, setDocumentKinds] = useState([]);
+  const [complianceKinds, setComplianceKinds] = useState([]);
+  const [docFileKey, setDocFileKey] = useState(0);
+  const [docForm, setDocForm] = useState({
+    kind_code: "report",
+    title: "",
+    document_date: todayIso(),
+    notes: "",
+    file: null,
+  });
+  const [compForm, setCompForm] = useState({
+    kind_code: "technical_report",
+    title: "",
+    due_date: todayIso(),
+    notes: "",
+  });
   const [assignForm, setAssignForm] = useState({
     person_id: "",
     task_id: "",
@@ -53,8 +71,22 @@ export default function Award() {
     setPeople(personList);
     setCommitments(commitmentList);
     setCategories(lookups.budget_categories || []);
+    setDocumentKinds(lookups.document_kinds || []);
+    setComplianceKinds(lookups.compliance_kinds || []);
     if (!assignForm.person_id && personList.length) {
       setAssignForm((current) => ({ ...current, person_id: String(personList[0].person_id) }));
+    }
+    try {
+      const [documentList, complianceList] = await Promise.all([
+        api(`/awards/${id}/documents`),
+        api(`/awards/${id}/compliance`),
+      ]);
+      setDocuments(documentList);
+      setCompliance(complianceList);
+    } catch (err) {
+      setDocuments([]);
+      setCompliance([]);
+      throw err;
     }
   }
 
@@ -183,6 +215,80 @@ export default function Award() {
     try {
       await api(`/commitments/${commitmentId}/cancel`, { method: "POST" });
       setNotice("Commitment cancelled.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function addDocument(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const created = await api(`/awards/${id}/documents`, {
+        method: "POST",
+        body: {
+          kind_code: docForm.kind_code,
+          title: docForm.title,
+          document_date: docForm.document_date || null,
+          notes: docForm.notes || null,
+        },
+      });
+      if (docForm.file) {
+        await uploadDocumentFile(created.document_id, docForm.file);
+      }
+      setDocForm({
+        kind_code: docForm.kind_code,
+        title: "",
+        document_date: todayIso(),
+        notes: "",
+        file: null,
+      });
+      setDocFileKey((current) => current + 1);
+      setNotice("Document saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function addCompliance(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/compliance`, {
+        method: "POST",
+        body: {
+          kind_code: compForm.kind_code,
+          title: compForm.title,
+          due_date: compForm.due_date,
+          notes: compForm.notes || null,
+        },
+      });
+      setCompForm({
+        kind_code: compForm.kind_code,
+        title: "",
+        due_date: todayIso(),
+        notes: "",
+      });
+      setNotice("Compliance item saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function setComplianceStatus(itemId, statusCode) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/compliance/${itemId}`, {
+        method: "PATCH",
+        body: { status_code: statusCode },
+      });
+      setNotice("Compliance updated.");
       await load();
     } catch (err) {
       setError(err.message);
@@ -575,6 +681,187 @@ export default function Award() {
                         onClick={() => cancelCommitment(row.commitment_id)}
                       >
                         Cancel
+                      </button>
+                    </>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <h2>Documents</h2>
+        <form onSubmit={addDocument}>
+          <div className="row">
+            <div>
+              <label>Kind</label>
+              <select
+                value={docForm.kind_code}
+                onChange={(event) =>
+                  setDocForm((current) => ({ ...current, kind_code: event.target.value }))
+                }
+              >
+                {documentKinds.map((row) => (
+                  <option key={row.kind_code} value={row.kind_code}>
+                    {row.kind_code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Date</label>
+              <input
+                type="date"
+                value={docForm.document_date}
+                onChange={(event) =>
+                  setDocForm((current) => ({ ...current, document_date: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <label>Title</label>
+          <input
+            value={docForm.title}
+            onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))}
+            required
+          />
+          <label>Notes</label>
+          <input
+            value={docForm.notes}
+            onChange={(event) => setDocForm((current) => ({ ...current, notes: event.target.value }))}
+          />
+          <label>File (optional)</label>
+          <input
+            key={docFileKey}
+            type="file"
+            onChange={(event) =>
+              setDocForm((current) => ({
+                ...current,
+                file: event.target.files && event.target.files[0] ? event.target.files[0] : null,
+              }))
+            }
+          />
+          <p>
+            <button type="submit">Save document</button>
+          </p>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Title</th>
+              <th>Date</th>
+              <th>File</th>
+            </tr>
+          </thead>
+          <tbody>
+            {documents.map((row) => (
+              <tr key={row.document_id}>
+                <td>{row.kind_code}</td>
+                <td>{row.title}</td>
+                <td>{row.document_date || "—"}</td>
+                <td>
+                  {row.has_file ? (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() =>
+                        downloadDocumentFile(row.document_id, row.original_filename).catch((err) =>
+                          setError(err.message),
+                        )
+                      }
+                    >
+                      Download
+                    </button>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <h2>Compliance</h2>
+        <form onSubmit={addCompliance}>
+          <div className="row">
+            <div>
+              <label>Kind</label>
+              <select
+                value={compForm.kind_code}
+                onChange={(event) =>
+                  setCompForm((current) => ({ ...current, kind_code: event.target.value }))
+                }
+              >
+                {complianceKinds.map((row) => (
+                  <option key={row.kind_code} value={row.kind_code}>
+                    {row.kind_code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Due</label>
+              <input
+                type="date"
+                value={compForm.due_date}
+                onChange={(event) =>
+                  setCompForm((current) => ({ ...current, due_date: event.target.value }))
+                }
+                required
+              />
+            </div>
+          </div>
+          <label>Title</label>
+          <input
+            value={compForm.title}
+            onChange={(event) => setCompForm((current) => ({ ...current, title: event.target.value }))}
+            required
+          />
+          <label>Notes</label>
+          <input
+            value={compForm.notes}
+            onChange={(event) => setCompForm((current) => ({ ...current, notes: event.target.value }))}
+          />
+          <p>
+            <button type="submit">Add due date</button>
+          </p>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Due</th>
+              <th>Kind</th>
+              <th>Title</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {compliance.map((row) => (
+              <tr key={row.compliance_item_id}>
+                <td>{row.due_date}</td>
+                <td>{row.kind_code}</td>
+                <td>{row.title}</td>
+                <td>
+                  <span className="status">{row.status_code}</span>
+                </td>
+                <td>
+                  {row.status_code === "open" ? (
+                    <>
+                      <button type="button" onClick={() => setComplianceStatus(row.compliance_item_id, "done")}>
+                        Done
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => setComplianceStatus(row.compliance_item_id, "waived")}
+                      >
+                        Waive
                       </button>
                     </>
                   ) : null}

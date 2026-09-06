@@ -14,7 +14,7 @@ from ledger.config import PROJECT_ROOT
 
 DEFAULT_WEB_DIST = PROJECT_ROOT / "web" / "dist"
 
-_SKIP_SPA_PREFIXES = ("/docs", "/redoc")
+_SKIP_SPA_PREFIXES = ("/docs", "/redoc", "/documents")
 _SKIP_SPA_PATHS = frozenset({"/openapi.json", "/health"})
 
 
