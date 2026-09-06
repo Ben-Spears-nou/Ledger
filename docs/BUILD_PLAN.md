@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D34). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D36). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,8 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–6.** Phase 7 stays listed at the
-bottom so it is not forgotten; do not implement it until 6 is Done.
+**This document specifies Phases 0–7.** There is no Phase 8 in this plan.
 
 ---
 
@@ -557,7 +556,7 @@ Phase 6–7.
 - With a fixture `web/dist`, `GET /login` with `Accept: text/html` is
   the SPA; `GET /health` stays JSON; JSON `GET /awards` is still the API.
 - `python tasks.py lint` and `python tasks.py test` stay green.
-- Phase 7 stays later until 6 is Done.
+- Phase 7 is specified in this document.
 
 ---
 
@@ -629,7 +628,7 @@ compliance_item
   column) without `--force`.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–4.
-- Phase 7 stays later until 6 is Done.
+- Phase 7 is specified in this document.
 
 ---
 
@@ -695,19 +694,47 @@ v_award_burn_monthly
 - Employee 403 on pipeline, burn, and alerts. D18 keys unchanged.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–5.
-- Phase 7 is still “do not build” in this document.
+- Phase 7 is specified next in this document.
 
 ---
 
-## Later phases (do not build yet)
+## Phase 7 — Audit log UI and charges CSV
 
-Recorded so Phase 6 does not “helpfully” grow into them.
+A read-only event list and a convenience dump of posted charges (D35–D36).
+Not QuickBooks. No new tables. Do not add GL mapping columns.
 
-| Phase | Scope |
-|---|---|
-| 7 | Audit log UI, convenience CSV of charges — still not QuickBooks |
+**Tasks**
 
-UI map for orientation (implement screens only when the phase needs them):
+- Record D35–D36. Do not change `db/schema.sql` or Alembic head
+  (`0007_phase6_pipeline_burn`).
+- Admin `GET /admin/audit` optional `action`, `entity_type`,
+  `occurred_from`, `occurred_to`, `limit` (default 500, max 2000). Newest
+  first. Existing JSON keys stay. Optional `actor_display_name`.
+- Admin `GET /admin/charges.csv` optional `award_id`, `work_from`,
+  `work_to`. `text/csv`. Columns from `charge` plus `award_short_code`.
+  Integer cents. Bearer token, not a public URL.
+- Employees 403. D18 unchanged. No PATCH/DELETE on `audit_event`.
+- `/audit` — admin list + filters; button to download the charges CSV.
+- Vite: `/audit` is an SPA route (API stays `/admin/audit`).
+
+**Acceptance criteria**
+
+- No new tables; Alembic head remains `0007_phase6_pipeline_burn`.
+- Admin audit list includes `week_approve` after an approve; `action`
+  filter returns only that action.
+- Charges CSV has a header and the posted `amount_cents`; employee 403.
+- Employee 403 on `/admin/audit`. D18 keys unchanged.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–6.
+
+---
+
+## Later work (not a numbered phase)
+
+Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
+QuickBooks.
+
+UI map:
 
 - `/login` — Phase 2.5
 - `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
@@ -719,4 +746,5 @@ UI map for orientation (implement screens only when the phase needs them):
 - `/instruments` — shared costs and splits (Phase 4)
 - `/compliance` — due dates across awards (Phase 5)
 - `/alerts` — 75% and PoP warnings (Phase 6)
+- `/audit` — event log and charges CSV (Phase 7)
 - `/admin` — users, categories, templates

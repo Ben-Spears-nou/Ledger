@@ -122,6 +122,32 @@ export async function downloadDocumentFile(documentId, filename) {
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function downloadChargesCsv(query = {}) {
+  const url = new URL("/admin/charges.csv", apiOrigin());
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  const headers = { Accept: "text/csv" };
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = "ledger-charges.csv";
+  link.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export function formatCents(cents) {
   return (Number(cents || 0) / 100).toLocaleString(undefined, {
     style: "currency",

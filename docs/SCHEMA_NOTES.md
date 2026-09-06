@@ -93,7 +93,7 @@ does not hide earlier labor.
 
 | Table | Notes |
 |---|---|
-| `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI/CSV. |
+| `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI and charges CSV (D35, D36). |
 
 Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status, pipeline create / update / delete.
 

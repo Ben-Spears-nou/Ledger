@@ -40,8 +40,9 @@ No QuickBooks/Xero sync, no general ledger, no tax/GAAP export as a
 requirement. Money in Ledger is **management actuals** for remaining budget,
 burn, and staffing.
 
-A convenience CSV dump of charges may come later (Phase 7). It is not a v1
-success criterion. Do not add accountant-mapping columns “for later.”
+A convenience CSV dump of charges is Phase 7 (D36). It is not a v1
+success criterion for the books. Do not add accountant-mapping columns
+“for later.”
 
 ---
 
@@ -215,18 +216,11 @@ default corporate Artifactory here does not publish `setuptools`.
 ## D13 — Deferred (do not build without a request)
 
 Phase 2.5 (share-readiness) is an official insert between 2 and 3. Do not
-skip 2.5. Phase 3 is tasks/assignments/capacity. Phase 4 is purchases,
-travel, commitments, and instrument splits. After 4 is Done, these remain
-later:
-
-- Phase 7 — Audit *UI* and CSV dump (not books). The `audit_event` table
-  itself is Phase 2.5 (D19). Phase 5 is D29–D31. Phase 6 (pipeline nodes,
-  burn/EAC/runway, 75% and PoP alerts) is D32–D34.
-
-Also out of v1: payroll/tax, depreciation engine, bank feeds, AI receipt
-coding, agency e-file, invoice *submission*, multi-company UI, exploding
-labor into fringe/OH/G&A journal lines, Postgres/HTTPS/SSO. Opt-in LAN
-bind and same-origin UI are D28; they are not a cloud rewrite.
+skip 2.5. Numbered phases 0–7 are specified. Also out of v1: payroll/tax,
+depreciation engine, bank feeds, AI receipt coding, agency e-file, invoice
+*submission*, multi-company UI, exploding labor into fringe/OH/G&A journal
+lines, Postgres/HTTPS/SSO. Opt-in LAN bind and same-origin UI are D28;
+they are not a cloud rewrite.
 
 ---
 
@@ -242,8 +236,8 @@ My week renders award + hours (and, in Phase 3, optional task). Unknown
 line fields stay ignored so later phases remain additive. Phase 4 may add
 purchases/travel on `/awards/:id` and `/instruments`. Phase 5 may add
 documents on `/awards/:id` and a compliance calendar. Phase 6 may add
-pipeline nodes and burn on `/awards/:id` and an alerts list. Do not add
-Phase 7 screens.
+pipeline nodes and burn on `/awards/:id` and an alerts list. Phase 7 may
+add `/audit` and a charges CSV. Do not add screens beyond that map.
 
 ---
 
@@ -298,6 +292,7 @@ capacity create, commitment create / post / cancel, instrument create,
 document create / file, compliance create / status, pipeline create /
 update / delete. Do not
 update or delete audit rows. `GET /admin/audit` is admin-only JSON.
+Phase 7 adds the UI and optional filters (D35), not a second table.
 
 ---
 
@@ -560,3 +555,25 @@ email. `as_of` is a query date (default today). Only `active` awards.
 - `pop_end`: `(pop_end − as_of).days <= 30`, including overdue.
 
 Compliance due dates stay on `/compliance` (D30). D18 unchanged.
+
+---
+
+## D35 — Audit UI lists events; it does not rewrite them
+
+`audit_event` stays append-only (D19). Phase 7 is a screen and optional
+query filters on `GET /admin/audit`: `action`, `entity_type`,
+`occurred_from`, `occurred_to`, `limit` (default 500, max 2000). Newest
+first. The UI lives at `/audit` and calls that API. Do not PATCH, DELETE,
+or edit `detail`. Never show a password (none are stored). Employees 403.
+D18 unchanged.
+
+---
+
+## D36 — Charges CSV is a dump of posted charges, not the books
+
+`GET /admin/charges.csv` is an admin convenience download of `charge`
+rows (optional `award_id`, `work_from`, `work_to`). Columns are existing
+charge facts plus `award_short_code` for readability. Money stays integer
+cents. Do not add GL accounts, vendor masters, or QuickBooks mapping
+columns (D3, D13). Employees 403. Same bearer token as other admin GETs;
+do not put the token in the URL.
