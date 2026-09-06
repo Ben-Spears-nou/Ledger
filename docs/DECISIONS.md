@@ -237,7 +237,9 @@ line fields stay ignored so later phases remain additive. Phase 4 may add
 purchases/travel on `/awards/:id` and `/instruments`. Phase 5 may add
 documents on `/awards/:id` and a compliance calendar. Phase 6 may add
 pipeline nodes and burn on `/awards/:id` and an alerts list. Phase 7 may
-add `/audit` and a charges CSV. Do not add screens beyond that map.
+add `/audit` and a charges CSV. Phase 8 may add `/awards/new`, person and
+rate forms on `/people`, header/mod/policy on `/awards/:id`, and dropdowns
+on `/audit`. Do not add screens beyond that map.
 
 ---
 
@@ -577,3 +579,27 @@ charge facts plus `award_short_code` for readability. Money stays integer
 cents. Do not add GL accounts, vendor masters, or QuickBooks mapping
 columns (D3, D13). Employees 403. Same bearer token as other admin GETs;
 do not put the token in the URL.
+
+---
+
+## D37 — Admins enter awards and people in the app, not in `/docs`
+
+Phases 0–2 were API-first (D14). After Phase 7 the remaining daily-admin
+gap is intake: create a person and base rate, create an award, record a
+mod, revise a rate policy, and pick audit filters from lists.
+
+Phase 8 is UI over existing write APIs (`POST /people`,
+`POST /people/{id}/rates`, `POST /awards`, `PATCH /awards/{id}`,
+`POST /awards/{id}/mods`, `POST /awards/{id}/rate-policies`). No new
+tables. Money stays integer cents on the wire; the UI shows dollars.
+Percents stay hundredths of a percent on the wire (D16); the UI shows
+percent points. Agency still grows when a new string is saved (D1).
+Rate-policy revisions remain new dated rows (D5). Unexercised options
+stay CLINs (D17), not remaining; the create wizard may omit CLINs.
+
+`GET /lookups` may list `audit_actions` and `audit_entity_types` for
+admins so the Audit screen does not require typing codes. That list is
+not a table. Employees still receive `time_codes` only (D18).
+
+FastAPI `/docs` is not the operator console. Do not add payroll, GL,
+email, or SSO (D13).

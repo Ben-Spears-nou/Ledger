@@ -155,6 +155,46 @@ export function formatCents(cents) {
   });
 }
 
+export function dollarsToCents(value) {
+  return Math.round(Number(value) * 100);
+}
+
+export function parseDollarsToCents(value) {
+  if (value === "" || value === null || value === undefined) {
+    return undefined;
+  }
+  const amount = Number(value);
+  if (Number.isNaN(amount)) {
+    return undefined;
+  }
+  return Math.round(amount * 100);
+}
+
+export function centsToDollarInput(cents) {
+  if (cents === null || cents === undefined || cents === "") {
+    return "";
+  }
+  return (Number(cents) / 100).toFixed(2);
+}
+
+export function pctToInput(hundredths) {
+  if (hundredths === null || hundredths === undefined || hundredths === "") {
+    return "";
+  }
+  return String(Number(hundredths) / 100);
+}
+
+export function parsePctToHundredths(value) {
+  if (value === "" || value === null || value === undefined) {
+    return undefined;
+  }
+  const amount = Number(value);
+  if (Number.isNaN(amount)) {
+    return undefined;
+  }
+  return Math.round(amount * 100);
+}
+
 export function mondayOnOrBefore(isoDate) {
   const [year, month, day] = isoDate.split("-").map(Number);
   const date = new Date(year, month - 1, day);

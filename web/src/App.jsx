@@ -4,6 +4,7 @@ import Alerts from "./pages/Alerts.jsx";
 import Approvals from "./pages/Approvals.jsx";
 import Audit from "./pages/Audit.jsx";
 import Award from "./pages/Award.jsx";
+import AwardNew from "./pages/AwardNew.jsx";
 import Compliance from "./pages/Compliance.jsx";
 import Instruments from "./pages/Instruments.jsx";
 import Login from "./pages/Login.jsx";
@@ -157,6 +158,16 @@ export default function App() {
           <RequireAdmin>
             <Shell>
               <Audit />
+            </Shell>
+          </RequireAdmin>
+        }
+      />
+      <Route
+        path="/awards/new"
+        element={
+          <RequireAdmin>
+            <Shell>
+              <AwardNew />
             </Shell>
           </RequireAdmin>
         }

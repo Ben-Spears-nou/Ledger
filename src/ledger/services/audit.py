@@ -30,6 +30,49 @@ CHARGE_CSV_COLUMNS = (
     "created_at",
 )
 
+AUDIT_ACTIONS = (
+    "assignment_create",
+    "award_create",
+    "capacity_create",
+    "commitment_cancel",
+    "commitment_create",
+    "commitment_post",
+    "compliance_create",
+    "compliance_status",
+    "document_create",
+    "document_file",
+    "instrument_create",
+    "login_failure",
+    "password_change",
+    "person_create",
+    "person_rate_create",
+    "pipeline_create",
+    "pipeline_delete",
+    "pipeline_update",
+    "rate_policy_revision",
+    "task_create",
+    "week_approve",
+    "week_return",
+    "week_submit",
+)
+
+AUDIT_ENTITY_TYPES = (
+    "assignment",
+    "award",
+    "award_rate_policy",
+    "commitment",
+    "compliance_item",
+    "document",
+    "instrument",
+    "person",
+    "person_capacity",
+    "person_rate",
+    "pipeline_node",
+    "task",
+    "timesheet_period",
+    "user_account",
+)
+
 
 class AuditError(ValueError):
     """Domain error turned into HTTP 400 by the API."""

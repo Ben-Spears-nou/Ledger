@@ -1,9 +1,61 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, downloadDocumentFile, formatCents, todayIso, uploadDocumentFile } from "../api.js";
+import {
+  api,
+  centsToDollarInput,
+  downloadDocumentFile,
+  formatCents,
+  parseDollarsToCents,
+  parsePctToHundredths,
+  pctToInput,
+  todayIso,
+  uploadDocumentFile,
+} from "../api.js";
 
 function dollarsToCents(value) {
   return Math.round(Number(value) * 100);
+}
+
+function headerFromAward(detail) {
+  return {
+    title: detail.title || "",
+    agency: detail.agency || "",
+    status_code: detail.status_code || "active",
+    funded_through: detail.funded_through || "",
+  };
+}
+
+function policyFromAward(detail) {
+  const policy = detail.current_policy;
+  return {
+    template_code: "",
+    cost_basis_code: policy?.cost_basis_code || "fully_burdened",
+    fringe_pct: pctToInput(policy?.fringe_pct ?? 0),
+    oh_pct: pctToInput(policy?.oh_pct ?? 0),
+    ga_pct: pctToInput(policy?.ga_pct ?? 0),
+    fee_pct: pctToInput(policy?.fee_pct ?? 0),
+    fee_in_burden: Boolean(policy?.fee_in_burden),
+    effective_from: todayIso(),
+  };
+}
+
+function modFromAward(detail) {
+  return {
+    mod_number: "",
+    effective_date: todayIso(),
+    description: "",
+    awarded_dollars: centsToDollarInput(detail.awarded_cost_cents),
+    funded_dollars: centsToDollarInput(detail.funded_amount_cents),
+    fee_pot_dollars: centsToDollarInput(detail.fee_pot_cents),
+    pop_start: detail.pop_start || "",
+    pop_end: detail.pop_end || "",
+    funded_through: detail.funded_through || "",
+    budget_lines: (detail.budget_lines || []).map((line) => ({
+      category_code: line.category_code,
+      label: line.label,
+      dollars: centsToDollarInput(line.approved_cents),
+    })),
+  };
 }
 
 export default function Award() {
@@ -66,6 +118,38 @@ export default function Award() {
     effective_date: todayIso(),
     trip_end: "",
   });
+  const [statuses, setStatuses] = useState([]);
+  const [agencies, setAgencies] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [costBases, setCostBases] = useState([]);
+  const [headerForm, setHeaderForm] = useState({
+    title: "",
+    agency: "",
+    status_code: "active",
+    funded_through: "",
+  });
+  const [policyForm, setPolicyForm] = useState({
+    template_code: "",
+    cost_basis_code: "fully_burdened",
+    fringe_pct: "",
+    oh_pct: "",
+    ga_pct: "",
+    fee_pct: "",
+    fee_in_burden: false,
+    effective_from: todayIso(),
+  });
+  const [modForm, setModForm] = useState({
+    mod_number: "",
+    effective_date: todayIso(),
+    description: "",
+    awarded_dollars: "",
+    funded_dollars: "",
+    fee_pot_dollars: "",
+    pop_start: "",
+    pop_end: "",
+    funded_through: "",
+    budget_lines: [],
+  });
 
   async function load() {
     const [detail, taskList, assignList, personList, commitmentList, lookups] = await Promise.all([
@@ -77,6 +161,9 @@ export default function Award() {
       api("/lookups"),
     ]);
     setAward(detail);
+    setHeaderForm(headerFromAward(detail));
+    setPolicyForm(policyFromAward(detail));
+    setModForm(modFromAward(detail));
     setTasks(taskList);
     setAssignments(assignList);
     setPeople(personList);
@@ -85,6 +172,10 @@ export default function Award() {
     setDocumentKinds(lookups.document_kinds || []);
     setComplianceKinds(lookups.compliance_kinds || []);
     setPipelineKinds(lookups.pipeline_kinds || []);
+    setStatuses(lookups.statuses || []);
+    setAgencies(lookups.agencies || []);
+    setTemplates(lookups.rate_policy_templates || []);
+    setCostBases(lookups.cost_bases || []);
     if (!assignForm.person_id && personList.length) {
       setAssignForm((current) => ({ ...current, person_id: String(personList[0].person_id) }));
     }
@@ -121,6 +212,101 @@ export default function Award() {
     load().catch((err) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  async function saveHeader(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}`, {
+        method: "PATCH",
+        body: {
+          title: headerForm.title,
+          agency: headerForm.agency,
+          status_code: headerForm.status_code,
+          funded_through: headerForm.funded_through || null,
+        },
+      });
+      setNotice("Award header saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function savePolicy(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/rate-policies`, {
+        method: "POST",
+        body: {
+          template_code: policyForm.template_code || null,
+          cost_basis_code: policyForm.cost_basis_code,
+          fringe_pct: parsePctToHundredths(policyForm.fringe_pct) ?? 0,
+          oh_pct: parsePctToHundredths(policyForm.oh_pct) ?? 0,
+          ga_pct: parsePctToHundredths(policyForm.ga_pct) ?? 0,
+          fee_pct: parsePctToHundredths(policyForm.fee_pct) ?? 0,
+          fee_in_burden: policyForm.fee_in_burden,
+          effective_from: policyForm.effective_from,
+        },
+      });
+      setNotice("Rate policy revised. Already-posted charges are unchanged.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  function applyPolicyTemplate(templateCode) {
+    const template = templates.find((row) => row.template_code === templateCode);
+    if (!template) {
+      setPolicyForm((current) => ({ ...current, template_code: templateCode }));
+      return;
+    }
+    setPolicyForm((current) => ({
+      ...current,
+      template_code: templateCode,
+      cost_basis_code: template.cost_basis_code,
+      fringe_pct: pctToInput(template.fringe_pct),
+      oh_pct: pctToInput(template.oh_pct),
+      ga_pct: pctToInput(template.ga_pct),
+      fee_pct: pctToInput(template.fee_pct),
+      fee_in_burden: Boolean(template.fee_in_burden),
+    }));
+  }
+
+  async function saveMod(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const body = {
+        mod_number: modForm.mod_number,
+        effective_date: modForm.effective_date,
+        description: modForm.description || null,
+        awarded_cost_cents: parseDollarsToCents(modForm.awarded_dollars),
+        funded_amount_cents: parseDollarsToCents(modForm.funded_dollars),
+        pop_start: modForm.pop_start || null,
+        pop_end: modForm.pop_end || null,
+        funded_through: modForm.funded_through || null,
+        budget_line_changes: modForm.budget_lines.map((line) => ({
+          category_code: line.category_code,
+          label: line.label,
+          approved_cents: parseDollarsToCents(line.dollars) ?? 0,
+        })),
+      };
+      if (award?.fee_engine === "fixed_pot") {
+        body.fee_pot_cents = parseDollarsToCents(modForm.fee_pot_dollars) ?? 0;
+      }
+      await api(`/awards/${id}/mods`, { method: "POST", body });
+      setNotice("Modification saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   async function addTask(event) {
     event.preventDefault();
@@ -382,6 +568,8 @@ export default function Award() {
         <span className="status">{award.status_code}</span>
       </h1>
       <p>{award.title}</p>
+      {error ? <p className="error">{error}</p> : null}
+      {notice ? <p>{notice}</p> : null}
       <div className="card">
         <h2>Remaining</h2>
         <table>
@@ -416,6 +604,341 @@ export default function Award() {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div className="card">
+        <h2>Award header</h2>
+        <p className="muted">
+          Status and title. Money and PoP changes belong on a modification.
+        </p>
+        <form onSubmit={saveHeader}>
+          <div className="row">
+            <div>
+              <label>Title</label>
+              <input
+                value={headerForm.title}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, title: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Agency</label>
+              <input
+                list="award-agency-list"
+                value={headerForm.agency}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, agency: event.target.value }))
+                }
+              />
+              <datalist id="award-agency-list">
+                {agencies.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <label>Status</label>
+              <select
+                value={headerForm.status_code}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, status_code: event.target.value }))
+                }
+              >
+                {statuses.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Funded through</label>
+              <input
+                type="date"
+                value={headerForm.funded_through}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, funded_through: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <p>
+            <button type="submit">Save header</button>
+          </p>
+        </form>
+      </div>
+      <div className="card">
+        <h2>Rate policy</h2>
+        <p className="muted">
+          A revision is a new dated row. Already-posted charges keep the old stack.
+        </p>
+        {award.current_policy ? (
+          <p>
+            Current: {award.current_policy.cost_basis_code} · fringe{" "}
+            {pctToInput(award.current_policy.fringe_pct)}% · OH{" "}
+            {pctToInput(award.current_policy.oh_pct)}% · G&A{" "}
+            {pctToInput(award.current_policy.ga_pct)}% · fee{" "}
+            {pctToInput(award.current_policy.fee_pct)}%
+            {award.current_policy.fee_in_burden ? " (fee in burden)" : ""} · from{" "}
+            {award.current_policy.effective_from}
+          </p>
+        ) : (
+          <p className="muted">No current policy.</p>
+        )}
+        <form onSubmit={savePolicy}>
+          <div className="row">
+            <div>
+              <label>Template (optional)</label>
+              <select
+                value={policyForm.template_code}
+                onChange={(event) => applyPolicyTemplate(event.target.value)}
+              >
+                <option value="">Keep numbers below</option>
+                {templates.map((row) => (
+                  <option key={row.template_code} value={row.template_code}>
+                    {row.template_code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Cost basis</label>
+              <select
+                value={policyForm.cost_basis_code}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({ ...current, cost_basis_code: event.target.value }))
+                }
+              >
+                {costBases.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Fringe %</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={policyForm.fringe_pct}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({ ...current, fringe_pct: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>OH %</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={policyForm.oh_pct}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({ ...current, oh_pct: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>G&A %</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={policyForm.ga_pct}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({ ...current, ga_pct: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Fee %</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={policyForm.fee_pct}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({ ...current, fee_pct: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Effective from</label>
+              <input
+                type="date"
+                value={policyForm.effective_from}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({ ...current, effective_from: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <p>
+            <label>
+              <input
+                type="checkbox"
+                checked={policyForm.fee_in_burden}
+                onChange={(event) =>
+                  setPolicyForm((current) => ({
+                    ...current,
+                    fee_in_burden: event.target.checked,
+                  }))
+                }
+              />{" "}
+              Include fee in the hourly burden
+            </label>
+          </p>
+          <p>
+            <button type="submit">Revise rate policy</button>
+          </p>
+        </form>
+      </div>
+      <div className="card">
+        <h2>Record a modification</h2>
+        <p className="muted">
+          New funded amount, PoP, or budget line totals. Prefill is the current award.
+        </p>
+        <form onSubmit={saveMod}>
+          <div className="row">
+            <div>
+              <label>Mod number</label>
+              <input
+                required
+                value={modForm.mod_number}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, mod_number: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Effective date</label>
+              <input
+                type="date"
+                required
+                value={modForm.effective_date}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, effective_date: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Description</label>
+              <input
+                value={modForm.description}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, description: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <label>Awarded ($)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={modForm.awarded_dollars}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, awarded_dollars: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Funded ($)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={modForm.funded_dollars}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, funded_dollars: event.target.value }))
+                }
+              />
+            </div>
+            {award.fee_engine === "fixed_pot" ? (
+              <div>
+                <label>Fee pot ($)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={modForm.fee_pot_dollars}
+                  onChange={(event) =>
+                    setModForm((current) => ({ ...current, fee_pot_dollars: event.target.value }))
+                  }
+                />
+              </div>
+            ) : null}
+            <div>
+              <label>PoP start</label>
+              <input
+                type="date"
+                value={modForm.pop_start}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, pop_start: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>PoP end</label>
+              <input
+                type="date"
+                value={modForm.pop_end}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, pop_end: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Funded through</label>
+              <input
+                type="date"
+                value={modForm.funded_through}
+                onChange={(event) =>
+                  setModForm((current) => ({ ...current, funded_through: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Budget line</th>
+                <th>Approved ($)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modForm.budget_lines.map((line, index) => (
+                <tr key={line.category_code}>
+                  <td>{line.label || line.category_code}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.dollars}
+                      onChange={(event) => {
+                        const dollars = event.target.value;
+                        setModForm((current) => ({
+                          ...current,
+                          budget_lines: current.budget_lines.map((item, i) =>
+                            i === index ? { ...item, dollars } : item,
+                          ),
+                        }));
+                      }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p>
+            <button type="submit">Save modification</button>
+          </p>
+        </form>
       </div>
       {alerts.length ? (
         <div className="card">
@@ -1075,8 +1598,6 @@ export default function Award() {
           </tbody>
         </table>
       </div>
-      {notice ? <p>{notice}</p> : null}
-      {error ? <p className="error">{error}</p> : null}
     </>
   );
 }

@@ -17,6 +17,9 @@ function detailText(detail) {
 
 export default function Audit() {
   const [rows, setRows] = useState([]);
+  const [awards, setAwards] = useState([]);
+  const [actions, setActions] = useState([]);
+  const [entityTypes, setEntityTypes] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [filters, setFilters] = useState({
@@ -24,6 +27,11 @@ export default function Audit() {
     entity_type: "",
     occurred_from: "",
     occurred_to: "",
+  });
+  const [csvFilters, setCsvFilters] = useState({
+    award_id: "",
+    work_from: "",
+    work_to: "",
   });
 
   async function load(next = filters) {
@@ -45,7 +53,17 @@ export default function Audit() {
   }
 
   useEffect(() => {
-    load().catch((err) => setError(err.message));
+    Promise.all([
+      load(),
+      api("/lookups"),
+      api("/awards", { query: { as: "picker" } }),
+    ])
+      .then(([, lookups, awardList]) => {
+        setActions(lookups.audit_actions || []);
+        setEntityTypes(lookups.audit_entity_types || []);
+        setAwards(awardList);
+      })
+      .catch((err) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -63,7 +81,11 @@ export default function Audit() {
     setError("");
     setNotice("");
     try {
-      await downloadChargesCsv();
+      await downloadChargesCsv({
+        award_id: csvFilters.award_id || undefined,
+        work_from: csvFilters.work_from || undefined,
+        work_to: csvFilters.work_to || undefined,
+      });
       setNotice("Download started.");
     } catch (err) {
       setError(err.message);
@@ -79,32 +101,84 @@ export default function Audit() {
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
       <div className="card">
+        <h2>Charges CSV</h2>
+        <div className="row">
+          <div>
+            <label>Award</label>
+            <select
+              value={csvFilters.award_id}
+              onChange={(event) =>
+                setCsvFilters((current) => ({ ...current, award_id: event.target.value }))
+              }
+            >
+              <option value="">All awards</option>
+              {awards.map((award) => (
+                <option key={award.award_id} value={award.award_id}>
+                  {award.short_code}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label>Work from</label>
+            <input
+              type="date"
+              value={csvFilters.work_from}
+              onChange={(event) =>
+                setCsvFilters((current) => ({ ...current, work_from: event.target.value }))
+              }
+            />
+          </div>
+          <div>
+            <label>Work to</label>
+            <input
+              type="date"
+              value={csvFilters.work_to}
+              onChange={(event) =>
+                setCsvFilters((current) => ({ ...current, work_to: event.target.value }))
+              }
+            />
+          </div>
+        </div>
         <p>
           <button type="button" onClick={downloadCsv}>
             Download charges CSV
           </button>
         </p>
+        <h2>Event log</h2>
         <form onSubmit={applyFilters}>
           <div className="row">
             <div>
               <label>Action</label>
-              <input
+              <select
                 value={filters.action}
                 onChange={(event) =>
                   setFilters((current) => ({ ...current, action: event.target.value }))
                 }
-                placeholder="week_approve"
-              />
+              >
+                <option value="">All actions</option>
+                {actions.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label>Entity</label>
-              <input
+              <select
                 value={filters.entity_type}
                 onChange={(event) =>
                   setFilters((current) => ({ ...current, entity_type: event.target.value }))
                 }
-                placeholder="award"
-              />
+              >
+                <option value="">All entities</option>
+                {entityTypes.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label>From</label>

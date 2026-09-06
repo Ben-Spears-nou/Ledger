@@ -52,6 +52,7 @@ browser (D28). SQLite stays on that host’s local disk (D15).
 Do not point teammates at Vite `:5173`. HTTPS and SSO are out of v1 (D13).
 
 Screens in `web/`: `/login`, `/me/week`, `/me/password`, `/approvals`,
-`/awards/:id`, `/portfolio`, `/people` (admin: capacity and assignments),
+`/awards/new` (admin: create an award), `/awards/:id`, `/portfolio`,
+`/people` (admin: people, logins, base rates, capacity, assignments),
 `/instruments` (admin: shared costs), `/compliance` (admin: due dates),
 `/alerts` (admin: 75% and PoP), `/audit` (admin: event log and charges CSV).

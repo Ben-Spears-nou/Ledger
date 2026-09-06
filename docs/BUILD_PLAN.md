@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D36). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D37). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,7 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–7.** There is no Phase 8 in this plan.
+**This document specifies Phases 0–8.** There is no Phase 9 in this plan.
 
 ---
 
@@ -729,6 +729,52 @@ Not QuickBooks. No new tables. Do not add GL mapping columns.
 
 ---
 
+## Phase 8 — Admin intake UI (replace `/docs` for daily work)
+
+Admins create people, rates, and awards in the React app, then record mods
+and rate-policy revisions on the award page. Audit filters are dropdowns.
+No new tables. Do not add GL, email, or `/docs` as a required operator
+path (D37). FastAPI `/docs` may remain for debugging.
+
+**Tasks**
+
+- Record D37. Do not change `db/schema.sql` or Alembic head
+  (`0007_phase6_pipeline_burn`).
+- Admin `GET /lookups` includes `audit_actions` and `audit_entity_types`
+  (known vocabularies, not a table). Employees still get `time_codes` only
+  (D18).
+- `/people` — admin: create a person (optional login), set a dated base
+  rate (hourly dollars or salary + hours/year). Capacity and assignments
+  stay. Dollars in the UI; cents on the wire.
+- `/awards/new` — admin wizard: identity, classification, dates, money,
+  rate recipe (template + percents), budget lines from the type template.
+  Agency is a pick-or-type field (D1). CLINs stay optional/API. After save,
+  go to `/awards/:id`.
+- `/portfolio` — **New award** link. Existing cards unchanged.
+- `/awards/:id` — admin: patch header (title, agency, status,
+  funded-through); record a mod (money / PoP / budget line amounts); revise
+  the rate policy (new dated row, D5). Dollars and percent points in the UI.
+- `/audit` — Action and Entity are `<select>`s from lookups, not free text.
+  Charges CSV may filter by award (picker) and work dates.
+- Vite: `/awards/new` is an SPA route registered before `/awards/:id`.
+
+**Acceptance criteria**
+
+- No new tables; Alembic head remains `0007_phase6_pipeline_burn`.
+- Admin lookups include `audit_actions` containing `week_approve` and
+  `award_create`; employee `/lookups` does not include `audit_actions`.
+- Admin `POST /people` then `POST /people/{id}/rates` still creates a
+  login and a dated base rate (the UI uses those endpoints).
+- Admin `POST /awards` still creates an award from the wizard payload
+  (cents, template, budget lines). `PATCH /awards/{id}`,
+  `POST /awards/{id}/mods`, and `POST /awards/{id}/rate-policies` still
+  work. Employees 403 on those writes.
+- D18 award-card keys unchanged. `/me/week` still has no dollars.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–7.
+
+---
+
 ## Later work (not a numbered phase)
 
 Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
@@ -739,12 +785,12 @@ UI map:
 - `/login` — Phase 2.5
 - `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
 - `/me/password` — change password (Phase 2.5 / D20)
-- `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6)
+- `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8)
+- `/awards/new` — admin award wizard (Phase 8)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8)
 - `/approvals` — submitted time (Phase 2.5)
-- `/people` — capacity and assignments (Phase 3)
+- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8)
 - `/instruments` — shared costs and splits (Phase 4)
 - `/compliance` — due dates across awards (Phase 5)
 - `/alerts` — 75% and PoP warnings (Phase 6)
-- `/audit` — event log and charges CSV (Phase 7)
-- `/admin` — users, categories, templates
+- `/audit` — event log and charges CSV (Phase 7); dropdown filters (Phase 8)

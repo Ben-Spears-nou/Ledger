@@ -28,6 +28,9 @@ Dates are ISO `YYYY-MM-DD`. Timestamps are SQLite `datetime('now')` text.
 | `rate_policy_template` | `template_code` | Fills the create form only. Percents seed as 0 (do not fabricate rates) |
 | `budget_template_line` | id | Default budget lines per `award_type` |
 
+Admin `GET /lookups` also returns `audit_actions` and `audit_entity_types`
+(Phase 8 / D37). Those are code lists for the Audit UI, not tables.
+
 `award_type.fee_engine = fixed_pot` means fee is a stored pot (`award.fee_pot_cents`),
 never `awarded_cost × fee_pct`.
 
@@ -38,7 +41,7 @@ never `awarded_cost × fee_pct`.
 | Table | Notes |
 |---|---|
 | `person` | Hire/term dates, optional `labor_category` for catalog overrides |
-| `person_rate` | Dated **base** only. Written in Phase 2; table exists now |
+| `person_rate` | Dated **base** only. Written in Phase 2; Phase 8 UI posts hourly or salary-derived cents |
 | `user_account` | `username` + `password_hash` + `role_code`. One account per person. `password_changed_at` is set on `POST /auth/password`; tokens with `iat` before that are rejected (D20). |
 
 ---
@@ -93,7 +96,7 @@ does not hide earlier labor.
 
 | Table | Notes |
 |---|---|
-| `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI and charges CSV (D35, D36). |
+| `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI and charges CSV (D35, D36). Phase 8 adds lookup lists for action/entity filters (D37). |
 
 Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status, pipeline create / update / delete.
 

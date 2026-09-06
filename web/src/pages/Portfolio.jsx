@@ -19,6 +19,9 @@ export default function Portfolio() {
   return (
     <>
       <h1>Awards</h1>
+      <p>
+        <Link to="/awards/new">New award</Link>
+      </p>
       {error ? <p className="error">{error}</p> : null}
       {awards.map((award) => (
         <div className="card" key={award.award_id}>

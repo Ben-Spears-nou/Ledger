@@ -37,6 +37,9 @@ def test_html_navigation_gets_spa_json_still_hits_api(tmp_path: Path, isolated_d
     award_page = client.get("/awards/1", headers=html)
     assert award_page.status_code == 200
     assert "Ledger SPA" in award_page.text
+    new_award = client.get("/awards/new", headers=html)
+    assert new_award.status_code == 200
+    assert "Ledger SPA" in new_award.text
 
     health = client.get("/health")
     assert health.status_code == 200

@@ -23,6 +23,7 @@ from ledger.models.lookups import (
 )
 from ledger.models.pipeline import PipelineKind
 from ledger.models.time import TimeCode
+from ledger.services.audit import AUDIT_ACTIONS, AUDIT_ENTITY_TYPES
 
 router = APIRouter(prefix="/lookups", tags=["lookups"])
 
@@ -127,5 +128,7 @@ def all_lookups(
             {"kind_code": row.kind_code, "description": row.description}
             for row in session.scalars(select(PipelineKind).order_by(PipelineKind.kind_code))
         ],
+        "audit_actions": list(AUDIT_ACTIONS),
+        "audit_entity_types": list(AUDIT_ENTITY_TYPES),
         "time_codes": _time_codes(session),
     }
