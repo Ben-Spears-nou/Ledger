@@ -21,6 +21,7 @@ from ledger.models.lookups import (
     CostBasis,
     RatePolicyTemplate,
 )
+from ledger.models.pipeline import PipelineKind
 from ledger.models.time import TimeCode
 
 router = APIRouter(prefix="/lookups", tags=["lookups"])
@@ -121,6 +122,10 @@ def all_lookups(
             for row in session.scalars(
                 select(ComplianceStatus).order_by(ComplianceStatus.status_code)
             )
+        ],
+        "pipeline_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(PipelineKind).order_by(PipelineKind.kind_code))
         ],
         "time_codes": _time_codes(session),
     }

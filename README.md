@@ -53,5 +53,5 @@ Do not point teammates at Vite `:5173`. HTTPS and SSO are out of v1 (D13).
 
 Screens in `web/`: `/login`, `/me/week`, `/me/password`, `/approvals`,
 `/awards/:id`, `/portfolio`, `/people` (admin: capacity and assignments),
-`/instruments` (admin: shared costs), `/compliance` (admin: due dates).
-Phase 6–7 are not built.
+`/instruments` (admin: shared costs), `/compliance` (admin: due dates),
+`/alerts` (admin: 75% and PoP). Phase 7 is not built.

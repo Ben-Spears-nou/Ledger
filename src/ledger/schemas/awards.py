@@ -174,6 +174,7 @@ class AwardRemainingOut(BaseModel):
     remaining_approved_cents: int
     remaining_funded_cents: int
     unexercised_option_cents: int
+    pipeline_cents: int = 0
 
 
 class AwardCardOut(BaseModel):

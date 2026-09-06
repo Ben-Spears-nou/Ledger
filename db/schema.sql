@@ -1,4 +1,4 @@
--- Ledger Phase 1–5 schema. SQLite 3.31+.
+-- Ledger Phase 1–6 schema. SQLite 3.31+.
 -- Money is integer cents. Percents are integer hundredths of a percent
 -- (3215 = 32.15%; multiplier is 1 + pct/10000). See docs/SCHEMA_NOTES.md.
 -- db/schema.sql is the source of truth. Do not invent tables here.
@@ -144,6 +144,16 @@ INSERT INTO compliance_status (status_code, description) VALUES
     ('open',   'Not finished'),
     ('done',   'Completed'),
     ('waived', 'No longer required');
+
+CREATE TABLE IF NOT EXISTS pipeline_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO pipeline_kind (kind_code, description) VALUES
+    ('next_phase', 'Next SBIR/STTR phase or follow-on'),
+    ('commercial', 'Commercial or customer follow-on'),
+    ('proposal',   'Proposal not yet awarded'),
+    ('other',      'Other forecast');
 
 CREATE TABLE IF NOT EXISTS rate_policy_template (
     template_code      TEXT PRIMARY KEY,
@@ -667,6 +677,17 @@ LEFT JOIN (
     GROUP BY c.award_id
 ) AS opts ON opts.award_id = a.award_id;
 
+DROP VIEW IF EXISTS v_award_burn_monthly;
+CREATE VIEW v_award_burn_monthly AS
+SELECT
+    ch.award_id AS award_id,
+    substr(ch.work_date, 1, 7) AS year_month,
+    SUM(ch.amount_cents) AS actual_cents
+FROM charge ch
+WHERE ch.award_id IS NOT NULL
+  AND ch.work_date IS NOT NULL
+GROUP BY ch.award_id, substr(ch.work_date, 1, 7);
+
 -- =====================================================================
 -- Documents and compliance (Phase 5). Files are on local disk (D29).
 -- =====================================================================
@@ -705,3 +726,22 @@ CREATE INDEX IF NOT EXISTS ix_compliance_award_due
     ON compliance_item (award_id, due_date);
 CREATE INDEX IF NOT EXISTS ix_compliance_due
     ON compliance_item (due_date);
+
+-- =====================================================================
+-- Pipeline forecast (Phase 6). Not remaining (D32).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS pipeline_node (
+    pipeline_node_id    INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES pipeline_kind (kind_code),
+    title               TEXT NOT NULL,
+    amount_cents        INTEGER NOT NULL CHECK (amount_cents >= 0),
+    expected_date       TEXT,
+    notes               TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_pipeline_node_award
+    ON pipeline_node (award_id);

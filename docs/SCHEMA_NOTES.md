@@ -67,7 +67,7 @@ It may be null until a personnel line exists.
 - `actual_cents` is `SUM(charge.amount_cents)`
 - `committed_cents` is `SUM(commitment.amount_cents)` where `status_code = open` (Phase 4)
 - `remaining_*` is 0 when `status_code = pipeline`
-- `unexercised_option_cents` is **not** included in remaining
+- `unexercised_option_cents` and `pipeline_cents` are **not** included in remaining
 
 ---
 
@@ -95,7 +95,7 @@ does not hide earlier labor.
 |---|---|
 | `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI/CSV. |
 
-Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status.
+Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status, pipeline create / update / delete.
 
 ---
 
@@ -139,3 +139,15 @@ set. Non-award time codes cannot carry a task.
 
 Files: `{data_dir}/documents/{award_id}/{document_id}{ext}`. Max 20 MiB.
 Admin-only. Remaining views unchanged.
+
+---
+
+## Pipeline and burn (Phase 6)
+
+| Table / view | Notes |
+|---|---|
+| `pipeline_kind` | Lookup: next_phase, commercial, proposal, other |
+| `pipeline_node` | Forecast cents on an award. Not remaining (D32). Not a CLIN option (D17) |
+| `v_award_burn_monthly` | `SUM(charge.amount_cents)` by award and `YYYY-MM` of `work_date` |
+
+EAC and runway are computed (D33). Alerts are computed on read (D34): no alert table, no email.

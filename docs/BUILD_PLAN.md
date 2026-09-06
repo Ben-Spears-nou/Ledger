@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D31). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D34). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,8 +14,8 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–5.** Phases 6–7 stay listed at the
-bottom so they are not forgotten; do not implement them until 5 is Done.
+**This document specifies Phases 0–6.** Phase 7 stays listed at the
+bottom so it is not forgotten; do not implement it until 6 is Done.
 
 ---
 
@@ -557,14 +557,14 @@ Phase 6–7.
 - With a fixture `web/dist`, `GET /login` with `Accept: text/html` is
   the SPA; `GET /health` stays JSON; JSON `GET /awards` is still the API.
 - `python tasks.py lint` and `python tasks.py test` stay green.
-- Phase 6 is still “do not build” in this document.
+- Phase 7 stays later until 6 is Done.
 
 ---
 
 ## Phase 5 — Documents, award files, compliance dates
 
 A register of award documents with optional files on local disk, plus
-dated compliance obligations (D29–D31). Do not build Phase 6–7 here.
+dated compliance obligations (D29–D31). Do not build Phase 7 here.
 Not a document-management product. Files are not remaining money (D4).
 
 **Tasks**
@@ -629,17 +629,82 @@ compliance_item
   column) without `--force`.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–4.
-- Phase 6 is still “do not build” in this document.
+- Phase 7 stays later until 6 is Done.
+
+---
+
+## Phase 6 — Pipeline, burn/EAC/runway, 75% and PoP alerts
+
+Forecast nodes plus integer burn projections and in-app alerts (D32–D34).
+Do not build Phase 7 here. Not EVM. Not email.
+
+**Tasks**
+
+### Schema
+
+- Propose D32–D34 in `DECISIONS.md`, then add tables to `db/schema.sql`.
+  Alembic `0007_phase6_pipeline_burn`. Remaining formulas stay D4; do not
+  subtract pipeline cents.
+- New objects:
+
+```
+pipeline_kind
+pipeline_node
+v_award_burn_monthly
+```
+
+### Pipeline
+
+- Admin `POST /awards/{id}/pipeline`: `kind_code`, `title`, `amount_cents`,
+  optional `expected_date`, `notes`. Closed awards 400. Pipeline status
+  allowed.
+- Admin `GET /awards/{id}/pipeline`, `GET /pipeline`,
+  `PATCH /pipeline/{id}`, `DELETE /pipeline/{id}`.
+- Employees 403. D18 unchanged. Remaining approved/funded unchanged.
+  `pipeline_cents` is a separate figure.
+
+### Burn / EAC / runway
+
+- Admin `GET /awards/{id}/burn` optional `as_of`. Monthly actuals from
+  `v_award_burn_monthly`; EAC and runway per D33.
+- Employees 403.
+
+### Alerts
+
+- Admin `GET /alerts` optional `as_of`, `award_id`. Computed `burn_ceiling`
+  and `pop_end` (D34). No table, no email.
+- Employees 403.
+
+### API / UI (minimum)
+
+- `/awards/:id` — admin: pipeline list/add/edit/delete; monthly burn, EAC,
+  runway; alert flags for that award.
+- `/alerts` — admin list across awards.
+- `/portfolio` — flag awards that have an alert.
+- Vite proxy `/pipeline`, `/alerts` (HTML bypass for `/alerts`).
+- Lookups: `pipeline_kinds` (admin `/lookups` only).
+
+**Acceptance criteria**
+
+- ORM matches `schema.sql`; Alembic head is `0007_phase6_pipeline_burn`.
+- Creating a pipeline node does not change `remaining_approved_cents`.
+- Monthly burn sums posted charges by `YYYY-MM` of `work_date`.
+- EAC uses integer daily burn × days left in PoP (D33).
+- CPFF `burn_ceiling` fires at `ceiling_warn_pct` of funded; a day 31
+  before `pop_end` is not a `pop_end` alert; day 30 is.
+- Employee 403 on pipeline, burn, and alerts. D18 keys unchanged.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–5.
+- Phase 7 is still “do not build” in this document.
 
 ---
 
 ## Later phases (do not build yet)
 
-Recorded so Phase 5 does not “helpfully” grow into them.
+Recorded so Phase 6 does not “helpfully” grow into them.
 
 | Phase | Scope |
 |---|---|
-| 6 | Pipeline nodes, burn/EAC/runway, 75% and PoP alerts |
 | 7 | Audit log UI, convenience CSV of charges — still not QuickBooks |
 
 UI map for orientation (implement screens only when the phase needs them):
@@ -647,10 +712,11 @@ UI map for orientation (implement screens only when the phase needs them):
 - `/login` — Phase 2.5
 - `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
 - `/me/password` — change password (Phase 2.5 / D20)
-- `/portfolio` — award cards (Phase 2.5 optional)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5)
+- `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6)
 - `/approvals` — submitted time (Phase 2.5)
 - `/people` — capacity and assignments (Phase 3)
 - `/instruments` — shared costs and splits (Phase 4)
 - `/compliance` — due dates across awards (Phase 5)
+- `/alerts` — 75% and PoP warnings (Phase 6)
 - `/admin` — users, categories, templates

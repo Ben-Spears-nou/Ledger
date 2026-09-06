@@ -219,10 +219,9 @@ skip 2.5. Phase 3 is tasks/assignments/capacity. Phase 4 is purchases,
 travel, commitments, and instrument splits. After 4 is Done, these remain
 later:
 
-- Phase 6 — Pipeline nodes, burn/runway, 75% and PoP alerts
 - Phase 7 — Audit *UI* and CSV dump (not books). The `audit_event` table
-  itself is Phase 2.5 (D19). Phase 5 (documents and compliance dates) is
-  D29–D31.
+  itself is Phase 2.5 (D19). Phase 5 is D29–D31. Phase 6 (pipeline nodes,
+  burn/EAC/runway, 75% and PoP alerts) is D32–D34.
 
 Also out of v1: payroll/tax, depreciation engine, bank feeds, AI receipt
 coding, agency e-file, invoice *submission*, multi-company UI, exploding
@@ -242,8 +241,9 @@ Vite on `:5173` is local development. Teammates use D28 (one origin).
 My week renders award + hours (and, in Phase 3, optional task). Unknown
 line fields stay ignored so later phases remain additive. Phase 4 may add
 purchases/travel on `/awards/:id` and `/instruments`. Phase 5 may add
-documents on `/awards/:id` and a compliance calendar. Do not add
-Phase 6–7 screens.
+documents on `/awards/:id` and a compliance calendar. Phase 6 may add
+pipeline nodes and burn on `/awards/:id` and an alerts list. Do not add
+Phase 7 screens.
 
 ---
 
@@ -265,7 +265,8 @@ The labor multiplier is `1 + pct / 10000`. Not float. Money remains cents.
 ## D17 — Unexercised options are CLINs, not remaining
 
 `clin.is_option = 1` and `exercised_at IS NULL` is pipeline money. Remaining
-views never add it. A dedicated `pipeline_node` table waits for Phase 6.
+views never add it. Other forecast (next phase, commercial, proposal) is
+`pipeline_node` (D32), also excluded from remaining.
 
 `budget_template_line` and `rate_policy_template` are lookups, not new
 domain tables beyond the Phase 1 freeze.
@@ -294,7 +295,8 @@ optional JSON detail. Write events for: login failure (never store the
 password), password change, person/rate create, award create, policy
 revision, week submit / approve / return, task create, assignment create,
 capacity create, commitment create / post / cancel, instrument create,
-document create / file, compliance create / status. Do not
+document create / file, compliance create / status, pipeline create /
+update / delete. Do not
 update or delete audit rows. `GET /admin/audit` is admin-only JSON.
 
 ---
@@ -477,7 +479,7 @@ unchanged. Closed and pipeline awards still accept documents (archive).
 
 A compliance item is a due date on one award (report, PoP end, IRB,
 invoice, other). It does not move remaining, committed, or actual (D4).
-Phase 6 burn/75%/PoP *alerts* stay later. Status is `open` | `done` |
+Burn/75%/PoP *alerts* are D34, not this table. Status is `open` | `done` |
 `waived`. Marking `done` sets `completed_at`; it does not delete the row.
 
 Proposed tables:
@@ -499,3 +501,62 @@ Audit `document_create`, `document_file`, `compliance_create`,
 `compliance_status` (D19). Download uses the same bearer token as other
 admin GETs; do not put the token in the file URL. No public/unauthenticated
 file path.
+
+---
+
+## D32 — Pipeline nodes are forecast, never remaining
+
+A `pipeline_node` is named future money on one award: next phase,
+commercial follow-on, a proposal, or other. It is D4 state 5. It is **not**
+an unexercised CLIN (those stay `clin.is_option`, D17). There is no
+“include in remaining” checkbox; remaining views never add these cents.
+
+`amount_cents` is integer cents. Optional `expected_date` is ISO. Forecast
+is not a posted charge, so PATCH and DELETE are allowed (unlike labor).
+Closed awards reject new nodes. Pipeline and active awards accept them.
+
+Proposed tables:
+
+- `pipeline_kind` — lookup (`next_phase`, `commercial`, `proposal`, `other`)
+- `pipeline_node` — `pipeline_node_id`, `award_id`, `kind_code`, `title`,
+  `amount_cents`, `expected_date` (nullable), `notes`, `created_at`,
+  `created_by`
+
+Admin-only. Employees 403. D18 cards unchanged. `remaining_approved_cents`
+and `remaining_funded_cents` unchanged. `pipeline_cents` may be shown as
+its own number next to `unexercised_option_cents`.
+
+---
+
+## D33 — Burn, EAC, and runway are integer projections from charges
+
+Monthly burn is `SUM(charge.amount_cents)` by `award_id` and
+`substr(work_date, 1, 7)` (`v_award_burn_monthly`). Charges with a null
+`work_date` are omitted.
+
+As-of a date (default today):
+
+- Window is 90 days ending on `as_of`, not before `pop_start`.
+- `daily_burn_cents` = window actuals // days in window (truncate).
+- `eac_cents` = actual-to-date + `daily_burn_cents` × days from `as_of`
+  through `pop_end` (0 days if `as_of` is after `pop_end`).
+- `runway_days` = `remaining_approved_cents` // `daily_burn_cents`, or
+  null when daily burn is 0.
+
+This is management projection, not EVM (no BCWS/SPI/CPI). No float. No
+email. Employees 403.
+
+---
+
+## D34 — 75% and PoP alerts are computed on read; they are not mail
+
+`GET /alerts` is admin-only and computed. Do not store alert rows. Do not
+email. `as_of` is a query date (default today). Only `active` awards.
+
+- `burn_ceiling`: `actual_cents * 100 >= basis_cents * ceiling_warn_pct`.
+  `basis_cents` is `funded_amount_cents` when `enforce_ceiling`, else
+  `approved_cents`. `ceiling_warn_pct` is already on the award (0–100,
+  default 75). Skip when basis is 0.
+- `pop_end`: `(pop_end − as_of).days <= 30`, including overdue.
+
+Compliance due dates stay on `/compliance` (D30). D18 unchanged.

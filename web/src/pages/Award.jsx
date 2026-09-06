@@ -21,6 +21,17 @@ export default function Award() {
   const [compliance, setCompliance] = useState([]);
   const [documentKinds, setDocumentKinds] = useState([]);
   const [complianceKinds, setComplianceKinds] = useState([]);
+  const [pipelineKinds, setPipelineKinds] = useState([]);
+  const [pipeline, setPipeline] = useState([]);
+  const [burn, setBurn] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [pipeForm, setPipeForm] = useState({
+    kind_code: "next_phase",
+    title: "",
+    dollars: "",
+    expected_date: "",
+    notes: "",
+  });
   const [docFileKey, setDocFileKey] = useState(0);
   const [docForm, setDocForm] = useState({
     kind_code: "report",
@@ -73,6 +84,7 @@ export default function Award() {
     setCategories(lookups.budget_categories || []);
     setDocumentKinds(lookups.document_kinds || []);
     setComplianceKinds(lookups.compliance_kinds || []);
+    setPipelineKinds(lookups.pipeline_kinds || []);
     if (!assignForm.person_id && personList.length) {
       setAssignForm((current) => ({ ...current, person_id: String(personList[0].person_id) }));
     }
@@ -86,6 +98,21 @@ export default function Award() {
     } catch (err) {
       setDocuments([]);
       setCompliance([]);
+      throw err;
+    }
+    try {
+      const [pipelineList, burnData, alertList] = await Promise.all([
+        api(`/awards/${id}/pipeline`),
+        api(`/awards/${id}/burn`, { query: { as_of: todayIso() } }),
+        api("/alerts", { query: { award_id: id, as_of: todayIso() } }),
+      ]);
+      setPipeline(pipelineList);
+      setBurn(burnData);
+      setAlerts(alertList);
+    } catch (err) {
+      setPipeline([]);
+      setBurn(null);
+      setAlerts([]);
       throw err;
     }
   }
@@ -295,6 +322,47 @@ export default function Award() {
     }
   }
 
+  async function addPipeline(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/pipeline`, {
+        method: "POST",
+        body: {
+          kind_code: pipeForm.kind_code,
+          title: pipeForm.title,
+          amount_cents: dollarsToCents(pipeForm.dollars),
+          expected_date: pipeForm.expected_date || null,
+          notes: pipeForm.notes || null,
+        },
+      });
+      setPipeForm({
+        kind_code: pipeForm.kind_code,
+        title: "",
+        dollars: "",
+        expected_date: "",
+        notes: "",
+      });
+      setNotice("Pipeline node saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removePipeline(nodeId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/pipeline/${nodeId}`, { method: "DELETE" });
+      setNotice("Pipeline node removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   if (!award) {
     if (error) {
       return <p className="error">{error}</p>;
@@ -335,9 +403,145 @@ export default function Award() {
               <td>{formatCents(remaining.actual_cents)}</td>
             </tr>
             <tr>
+              <th>Unexercised options</th>
+              <td>{formatCents(remaining.unexercised_option_cents)}</td>
+            </tr>
+            <tr>
+              <th>Pipeline (forecast)</th>
+              <td>{formatCents(remaining.pipeline_cents)}</td>
+            </tr>
+            <tr>
               <th>Fee pot</th>
               <td>{formatCents(award.fee_pot_cents)}</td>
             </tr>
+          </tbody>
+        </table>
+      </div>
+      {alerts.length ? (
+        <div className="card">
+          <h2>Alerts</h2>
+          <ul>
+            {alerts.map((row) => (
+              <li key={`${row.alert_code}-${row.award_id}`}>
+                {row.alert_code === "burn_ceiling"
+                  ? `Spent ${formatCents(row.actual_cents)} of ${formatCents(row.basis_cents)} (${row.ceiling_warn_pct}% warn).`
+                  : `PoP ends ${row.pop_end} (${row.days_to_pop_end} days).`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {burn ? (
+        <div className="card">
+          <h2>Burn</h2>
+          <p className="muted">
+            Daily {formatCents(burn.daily_burn_cents)} · EAC {formatCents(burn.eac_cents)} · runway{" "}
+            {burn.runway_days === null || burn.runway_days === undefined
+              ? "n/a"
+              : `${burn.runway_days} days`}{" "}
+            · as of {burn.as_of}
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Actual</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(burn.months || []).map((row) => (
+                <tr key={row.year_month}>
+                  <td>{row.year_month}</td>
+                  <td>{formatCents(row.actual_cents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      <div className="card">
+        <h2>Pipeline</h2>
+        <p className="muted">Forecast only. This is not remaining to spend.</p>
+        <form onSubmit={addPipeline}>
+          <div className="row">
+            <div>
+              <label>Kind</label>
+              <select
+                value={pipeForm.kind_code}
+                onChange={(event) =>
+                  setPipeForm((current) => ({ ...current, kind_code: event.target.value }))
+                }
+              >
+                {pipelineKinds.map((row) => (
+                  <option key={row.kind_code} value={row.kind_code}>
+                    {row.kind_code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Amount</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={pipeForm.dollars}
+                onChange={(event) =>
+                  setPipeForm((current) => ({ ...current, dollars: event.target.value }))
+                }
+                required
+              />
+            </div>
+            <div>
+              <label>Expected</label>
+              <input
+                type="date"
+                value={pipeForm.expected_date}
+                onChange={(event) =>
+                  setPipeForm((current) => ({ ...current, expected_date: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <label>Title</label>
+          <input
+            value={pipeForm.title}
+            onChange={(event) => setPipeForm((current) => ({ ...current, title: event.target.value }))}
+            required
+          />
+          <label>Notes</label>
+          <input
+            value={pipeForm.notes}
+            onChange={(event) => setPipeForm((current) => ({ ...current, notes: event.target.value }))}
+          />
+          <p>
+            <button type="submit">Add forecast</button>
+          </p>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Kind</th>
+              <th>Title</th>
+              <th>Amount</th>
+              <th>Expected</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {pipeline.map((row) => (
+              <tr key={row.pipeline_node_id}>
+                <td>{row.kind_code}</td>
+                <td>{row.title}</td>
+                <td>{formatCents(row.amount_cents)}</td>
+                <td>{row.expected_date || "—"}</td>
+                <td>
+                  <button type="button" className="secondary" onClick={() => removePipeline(row.pipeline_node_id)}>
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

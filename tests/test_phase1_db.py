@@ -41,6 +41,8 @@ REQUIRED_TABLES = {
     "compliance_kind",
     "compliance_status",
     "compliance_item",
+    "pipeline_kind",
+    "pipeline_node",
 }
 
 
@@ -50,6 +52,7 @@ def test_schema_sql_declares_the_phase1_freeze() -> None:
     assert REQUIRED_TABLES <= declared.tables
     assert "v_budget_remaining" in declared.views
     assert "v_budget_line_remaining" in declared.views
+    assert "v_award_burn_monthly" in declared.views
 
 
 def test_db_init_creates_tables_fks_and_views(isolated_db: Path) -> None:
@@ -70,6 +73,7 @@ def test_db_init_creates_tables_fks_and_views(isolated_db: Path) -> None:
         }
         assert REQUIRED_TABLES <= tables
         assert "v_budget_remaining" in views
+        assert "v_award_burn_monthly" in views
         columns = [row[1] for row in connection.execute(text("PRAGMA table_info(award)"))]
         assert "fee_pot_cents" in columns
         assert "enforce_ceiling" in columns
@@ -130,4 +134,4 @@ def test_alembic_upgrade_on_empty_database(tmp_path: Path, monkeypatch: pytest.M
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
     assert REQUIRED_TABLES <= tables
     assert "alembic_version" in tables
-    assert version == "0006_phase5_documents"
+    assert version == "0007_phase6_pipeline_burn"

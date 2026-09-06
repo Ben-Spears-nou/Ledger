@@ -30,6 +30,8 @@ export default defineConfig({
       "/instruments": { target: API, bypass: spaPage },
       "/documents": API,
       "/compliance": { target: API, bypass: spaPage },
+      "/pipeline": API,
+      "/alerts": { target: API, bypass: spaPage },
       "/health": API,
     },
   },

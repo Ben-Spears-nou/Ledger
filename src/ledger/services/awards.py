@@ -38,6 +38,7 @@ from ledger.schemas.awards import (
     RatePolicyOut,
 )
 from ledger.services.audit import record_event
+from ledger.services.pipeline import pipeline_cents_for
 
 
 class AwardError(ValueError):
@@ -515,7 +516,9 @@ def remaining_for(session: Session, award_id: int) -> AwardRemainingOut | None:
     row = session.execute(remaining_stmt(award_id)).mappings().first()
     if row is None:
         return None
-    return _remaining_out(row)
+    data = dict(row)
+    data["pipeline_cents"] = pipeline_cents_for(session, award_id)
+    return _remaining_out(data)
 
 
 def _remaining_out(row: object) -> AwardRemainingOut:
@@ -537,6 +540,7 @@ def _remaining_out(row: object) -> AwardRemainingOut:
         remaining_approved_cents=int(data["remaining_approved_cents"]),
         remaining_funded_cents=int(data["remaining_funded_cents"]),
         unexercised_option_cents=int(data["unexercised_option_cents"]),
+        pipeline_cents=int(data.get("pipeline_cents") or 0),
     )
 
 

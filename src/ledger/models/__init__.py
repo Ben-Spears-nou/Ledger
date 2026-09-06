@@ -27,6 +27,7 @@ from ledger.models.lookups import (
     RatePolicyTemplate,
     Role,
 )
+from ledger.models.pipeline import PipelineKind, PipelineNode
 from ledger.models.schedule import Assignment, PersonCapacity, Task
 from ledger.models.time import Charge, TimeCode, TimesheetLine, TimesheetPeriod
 
@@ -63,6 +64,8 @@ __all__ = [
     "Person",
     "PersonCapacity",
     "PersonRate",
+    "PipelineKind",
+    "PipelineNode",
     "RatePolicyTemplate",
     "Role",
     "Task",

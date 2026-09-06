@@ -4,11 +4,15 @@ import { api, formatCents } from "../api.js";
 
 export default function Portfolio() {
   const [awards, setAwards] = useState([]);
+  const [alertIds, setAlertIds] = useState(new Set());
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api("/awards")
-      .then(setAwards)
+    Promise.all([api("/awards"), api("/alerts")])
+      .then(([list, alerts]) => {
+        setAwards(list);
+        setAlertIds(new Set(alerts.map((row) => row.award_id)));
+      })
       .catch((err) => setError(err.message));
   }, []);
 
@@ -21,6 +25,7 @@ export default function Portfolio() {
           <h2>
             <Link to={`/awards/${award.award_id}`}>{award.short_code}</Link>{" "}
             <span className="status">{award.status_code}</span>
+            {alertIds.has(award.award_id) ? <span className="status">alert</span> : null}
           </h2>
           <p>{award.title}</p>
           {award.remaining ? (
