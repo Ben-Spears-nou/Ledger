@@ -239,7 +239,9 @@ documents on `/awards/:id` and a compliance calendar. Phase 6 may add
 pipeline nodes and burn on `/awards/:id` and an alerts list. Phase 7 may
 add `/audit` and a charges CSV. Phase 8 may add `/awards/new`, person and
 rate forms on `/people`, header/mod/policy on `/awards/:id`, and dropdowns
-on `/audit`. Do not add screens beyond that map.
+on `/audit`. Phase 9 may add login management on `/people` and header /
+CLINs / unused-award delete on `/awards/:id`. Do not add screens beyond
+that map.
 
 ---
 
@@ -603,3 +605,41 @@ not a table. Employees still receive `time_codes` only (D18).
 
 FastAPI `/docs` is not the operator console. Do not add payroll, GL,
 email, or SSO (D13).
+
+---
+
+## D38 — Admins manage logins in the app; the last admin cannot be removed
+
+Admin `PATCH /people/{id}` may set `role_code` and `is_active` on an
+existing login. Admin `POST /people/{id}/password` sets a new password
+without the current one (reset). Both require a login on that person.
+Username stays immutable. Employees 403.
+
+Reset stamps `password_changed_at` so earlier tokens die (D20). Do not
+store the new password in audit `detail`. Actions: `person_update`,
+`password_reset`.
+
+The last **active admin** cannot be demoted or deactivated (409). An
+inactive admin does not count. No email reset (D20). No SSO (D13).
+
+---
+
+## D39 — Award facts can be edited; unused awards can be deleted; used awards close
+
+`PATCH /awards/{id}` may also set `short_code`, `instrument_code`,
+`mechanism_code`, and `phase_code`. Money and PoP still go through a mod
+(D5). `type_code` may change only while the award has no `charge` and no
+`commitment`; then restamp `enforce_ceiling`, `labor_incurred`,
+`fee_engine`, and `ceiling_warn_pct` from the type. After that, type is
+locked.
+
+CLINs are admin CRUD on the award: create, patch, exercise (`exercised_at`),
+delete only while `exercised_at` is null. Exercising an option drops it
+from `unexercised_option_cents`; it does not by itself change funded
+remaining (record a mod for money). D17 unchanged.
+
+`DELETE /awards/{id}` is allowed only when unused: no `charge`, no
+`commitment`, no `timesheet_line.award_id`, no `instrument_share`.
+Otherwise 409 — set `status_code = closed` instead. Delete removes the
+award’s child rows and on-disk document files. Posted actuals are never
+stripped. Employees 403. D18 cards unchanged.

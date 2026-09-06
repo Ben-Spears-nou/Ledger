@@ -42,7 +42,7 @@ never `awarded_cost × fee_pct`.
 |---|---|
 | `person` | Hire/term dates, optional `labor_category` for catalog overrides |
 | `person_rate` | Dated **base** only. Written in Phase 2; Phase 8 UI posts hourly or salary-derived cents |
-| `user_account` | `username` + `password_hash` + `role_code`. One account per person. `password_changed_at` is set on `POST /auth/password`; tokens with `iat` before that are rejected (D20). |
+| `user_account` | `username` + `password_hash` + `role_code`. One account per person. `password_changed_at` is set on `POST /auth/password` and admin `POST /people/{id}/password` (D20, D38). Username is not patched. Last active admin cannot be demoted or deactivated. |
 
 ---
 
@@ -50,9 +50,9 @@ never `awarded_cost × fee_pct`.
 
 | Table | Notes |
 |---|---|
-| `award` | Intake fields plus a **stamped** copy of the type's rules profile |
+| `award` | Intake fields plus a **stamped** copy of the type's rules profile. Type restamp only while unused (D39). Unused awards may be deleted; used awards close. |
 | `award_mod` | History of money/PoP changes. New row per mod; award current fields update |
-| `clin` | Optional CLINs. `is_option=1` and `exercised_at IS NULL` is pipeline money (D17) |
+| `clin` | Optional CLINs. `is_option=1` and `exercised_at IS NULL` is pipeline money (D17). Phase 9 can add/patch/exercise; delete only while unexercised. |
 | `budget_version` | One `is_active=1` per award (partial unique index) |
 | `budget_line` | Approved cents on a version. Remaining is a view |
 | `award_rate_policy` | Dated recipe (D11). Revisions are new rows (D5) |
@@ -98,7 +98,7 @@ does not hide earlier labor.
 |---|---|
 | `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI and charges CSV (D35, D36). Phase 8 adds lookup lists for action/entity filters (D37). |
 
-Written for: login failure (never the password), password change, person/rate create, award create, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status, pipeline create / update / delete.
+Written for: login failure (never the password), password change, password reset, person create / update, person rate create, award create / update / delete, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status, pipeline create / update / delete, clin create / update / exercise / delete.
 
 ---
 

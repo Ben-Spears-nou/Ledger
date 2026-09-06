@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D37). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D39). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,7 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–8.** There is no Phase 9 in this plan.
+**This document specifies Phases 0–9.** There is no Phase 10 in this plan.
 
 ---
 
@@ -775,6 +775,48 @@ path (D37). FastAPI `/docs` may remain for debugging.
 
 ---
 
+## Phase 9 — Admin logins, award facts, CLINs, unused delete
+
+Admins manage role/active/password on People, expand award header and
+CLINs, and delete only unused awards (D38–D39). No new tables. Do not
+add email reset or GL.
+
+**Tasks**
+
+- Record D38–D39. Do not change `db/schema.sql` or Alembic head
+  (`0007_phase6_pipeline_burn`).
+- Admin `PATCH /people/{id}`: `role_code`, `is_active`. Existing login
+  required. Last active admin cannot be demoted or deactivated (409).
+- Admin `POST /people/{id}/password`: `{new_password}`. Stamps
+  `password_changed_at` (D20). Never audit the password.
+- `GET /people` includes `is_active` (null when there is no login).
+- `/people` UI: save role/active; reset password.
+- Admin `PATCH /awards/{id}` also `short_code`, `instrument_code`,
+  `mechanism_code`, `phase_code`, and `type_code` only when unused
+  (no charge, no commitment). Type restamps the rules profile.
+- Admin CLIN routes on `/awards/{id}/clins`. Exercise sets
+  `exercised_at`. Delete unexercised only.
+- Admin `DELETE /awards/{id}` when unused (no charge, commitment,
+  timesheet line on the award, or instrument share). Else 409. Used
+  awards close via header status.
+- AwardOut may include `can_delete` and `type_locked`. D18 unchanged.
+- Lookups `audit_actions` include the new action names.
+
+**Acceptance criteria**
+
+- No new tables; Alembic head remains `0007_phase6_pipeline_burn`.
+- Two admins: demoting one succeeds; demoting the last active admin is
+  409. Reset password rejects the old token; employee 403 on PATCH
+  people and password reset.
+- Unused award DELETE is 204; an award with a posted charge is 409.
+  Closing via PATCH still works. Employee 403 on DELETE.
+- CLIN create + exercise removes those cents from
+  `unexercised_option_cents`. D18 keys unchanged.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–8.
+
+---
+
 ## Later work (not a numbered phase)
 
 Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
@@ -787,9 +829,9 @@ UI map:
 - `/me/password` — change password (Phase 2.5 / D20)
 - `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8)
 - `/awards/new` — admin award wizard (Phase 8)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9)
 - `/approvals` — submitted time (Phase 2.5)
-- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8)
+- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9)
 - `/instruments` — shared costs and splits (Phase 4)
 - `/compliance` — due dates across awards (Phase 5)
 - `/alerts` — 75% and PoP warnings (Phase 6)

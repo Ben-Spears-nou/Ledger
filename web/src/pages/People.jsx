@@ -49,6 +49,12 @@ export default function People() {
     hours_per_week: "",
     effective_from: todayIso(),
   });
+  const [loginForm, setLoginForm] = useState({
+    person_id: "",
+    role_code: "employee",
+    is_active: true,
+    new_password: "",
+  });
 
   async function load(start) {
     const monday = mondayOnOrBefore(start);
@@ -85,6 +91,17 @@ export default function People() {
       ...current,
       person_id: current.person_id || firstId,
     }));
+    const withLogin = personList.filter((person) => person.username);
+    const loginId = loginForm.person_id || (withLogin[0] ? String(withLogin[0].person_id) : "");
+    if (loginId) {
+      const selected = personList.find((person) => String(person.person_id) === String(loginId));
+      setLoginForm((current) => ({
+        ...current,
+        person_id: loginId,
+        role_code: selected?.role_code || "employee",
+        is_active: selected?.is_active !== false,
+      }));
+    }
   }
 
   useEffect(() => {
@@ -169,6 +186,55 @@ export default function People() {
         effective_from: todayIso(),
       }));
       setNotice("Base rate saved.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const logins = people.filter((person) => person.username);
+  const selectedLogin = logins.find(
+    (person) => String(person.person_id) === String(loginForm.person_id),
+  );
+  const activeAdminCount = people.filter(
+    (person) => person.role_code === "admin" && person.is_active,
+  ).length;
+  const selectedIsLastAdmin =
+    selectedLogin &&
+    selectedLogin.role_code === "admin" &&
+    selectedLogin.is_active &&
+    activeAdminCount <= 1;
+
+  async function saveLogin(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/people/${loginForm.person_id}`, {
+        method: "PATCH",
+        body: {
+          role_code: loginForm.role_code,
+          is_active: loginForm.is_active,
+        },
+      });
+      setNotice("Login saved.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function resetPassword(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/people/${loginForm.person_id}/password`, {
+        method: "POST",
+        body: { new_password: loginForm.new_password },
+      });
+      setLoginForm((current) => ({ ...current, new_password: "" }));
+      setNotice("Password reset. They must log in with the new password.");
       await load(weekStart);
     } catch (err) {
       setError(err.message);
@@ -419,6 +485,7 @@ export default function People() {
               <th>Name</th>
               <th>Username</th>
               <th>Role</th>
+              <th>Active</th>
               <th>Current hourly</th>
             </tr>
           </thead>
@@ -431,6 +498,13 @@ export default function People() {
                   <td>{person.username || "—"}</td>
                   <td>{person.role_code || "—"}</td>
                   <td>
+                    {person.username
+                      ? person.is_active
+                        ? "yes"
+                        : "no"
+                      : "—"}
+                  </td>
+                  <td>
                     {rate ? formatCents(rate.base_rate_cents) : "—"}
                     {rate && rate.effective_from ? (
                       <span className="muted"> from {rate.effective_from}</span>
@@ -441,6 +515,98 @@ export default function People() {
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="card">
+        <h2>Login</h2>
+        <p className="muted">
+          Reset password, change role, or deactivate. You cannot remove the last active admin.
+        </p>
+        {logins.length ? (
+          <>
+            <form onSubmit={saveLogin}>
+              <div className="row">
+                <div>
+                  <label>Person</label>
+                  <select
+                    value={loginForm.person_id}
+                    onChange={(event) => {
+                      const id = event.target.value;
+                      const selected = people.find((person) => String(person.person_id) === id);
+                      setLoginForm((current) => ({
+                        ...current,
+                        person_id: id,
+                        role_code: selected?.role_code || "employee",
+                        is_active: selected?.is_active !== false,
+                      }));
+                    }}
+                  >
+                    {logins.map((person) => (
+                      <option key={person.person_id} value={person.person_id}>
+                        {person.display_name} ({person.username})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label>Role</label>
+                  <select
+                    value={loginForm.role_code}
+                    disabled={Boolean(selectedIsLastAdmin)}
+                    onChange={(event) =>
+                      setLoginForm((current) => ({ ...current, role_code: event.target.value }))
+                    }
+                  >
+                    <option value="employee">employee</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Active</label>
+                  <select
+                    value={loginForm.is_active ? "1" : "0"}
+                    disabled={Boolean(selectedIsLastAdmin)}
+                    onChange={(event) =>
+                      setLoginForm((current) => ({
+                        ...current,
+                        is_active: event.target.value === "1",
+                      }))
+                    }
+                  >
+                    <option value="1">yes</option>
+                    <option value="0">no</option>
+                  </select>
+                </div>
+              </div>
+              {selectedIsLastAdmin ? (
+                <p className="muted">This is the last active admin. Add another admin before changing this login.</p>
+              ) : null}
+              <p>
+                <button type="submit">Save login</button>
+              </p>
+            </form>
+            <form onSubmit={resetPassword}>
+              <div className="row">
+                <div>
+                  <label>New temporary password</label>
+                  <input
+                    type="password"
+                    required
+                    value={loginForm.new_password}
+                    onChange={(event) =>
+                      setLoginForm((current) => ({ ...current, new_password: event.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+              <p>
+                <button type="submit">Reset password</button>
+              </p>
+            </form>
+          </>
+        ) : (
+          <p className="muted">No logins yet. Create a person with a login above.</p>
+        )}
       </div>
 
       <div className="card">

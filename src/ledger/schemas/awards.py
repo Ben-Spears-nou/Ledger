@@ -73,10 +73,32 @@ class AwardCreate(BaseModel):
 class AwardUpdate(BaseModel):
     """Partial award header edit (not a formal mod)."""
 
+    short_code: str | None = None
     title: str | None = None
     agency: str | None = None
+    instrument_code: str | None = None
+    mechanism_code: str | None = None
+    phase_code: str | None = None
+    type_code: str | None = None
     status_code: str | None = None
     funded_through: str | None = None
+
+
+class ClinUpdate(BaseModel):
+    """Patch a CLIN. Exercised_at is set via the exercise route."""
+
+    clin_number: str | None = None
+    description: str | None = None
+    amount_cents: int | None = Field(default=None, ge=0)
+    is_option: bool | None = None
+    exercise_window_start: str | None = None
+    exercise_window_end: str | None = None
+
+
+class ClinExerciseIn(BaseModel):
+    """Mark an option CLIN exercised (D17, D39)."""
+
+    exercised_at: str | None = None
 
 
 class BudgetLineChange(BaseModel):
@@ -215,3 +237,5 @@ class AwardOut(BaseModel):
     budget_lines: list[BudgetLineOut] = Field(default_factory=list)
     clins: list[ClinOut] = Field(default_factory=list)
     remaining: AwardRemainingOut | None = None
+    can_delete: bool = False
+    type_locked: bool = False

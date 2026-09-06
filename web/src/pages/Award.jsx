@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api,
   centsToDollarInput,
@@ -18,11 +18,72 @@ function dollarsToCents(value) {
 
 function headerFromAward(detail) {
   return {
+    short_code: detail.short_code || "",
     title: detail.title || "",
     agency: detail.agency || "",
+    instrument_code: detail.instrument_code || "",
+    mechanism_code: detail.mechanism_code || "",
+    phase_code: detail.phase_code || "",
+    type_code: detail.type_code || "",
     status_code: detail.status_code || "active",
     funded_through: detail.funded_through || "",
   };
+}
+
+function emptyClinForm() {
+  return {
+    clin_number: "",
+    description: "",
+    dollars: "",
+    is_option: false,
+  };
+}
+
+function ClinRow({ clin, onSave, onExercise, onRemove }) {
+  const [dollars, setDollars] = useState(centsToDollarInput(clin.amount_cents));
+
+  useEffect(() => {
+    setDollars(centsToDollarInput(clin.amount_cents));
+  }, [clin.amount_cents]);
+
+  const exercised = Boolean(clin.exercised_at);
+
+  return (
+    <tr>
+      <td>{clin.clin_number}</td>
+      <td>{clin.description || "—"}</td>
+      <td>
+        {exercised ? (
+          formatCents(clin.amount_cents)
+        ) : (
+          <span>
+            <input
+              value={dollars}
+              onChange={(event) => setDollars(event.target.value)}
+              aria-label={`Amount for CLIN ${clin.clin_number}`}
+            />
+            <button type="button" onClick={() => onSave(clin, dollars)}>
+              Save
+            </button>
+          </span>
+        )}
+      </td>
+      <td>{clin.is_option ? "yes" : "no"}</td>
+      <td>{clin.exercised_at || "—"}</td>
+      <td>
+        {clin.is_option && !exercised ? (
+          <button type="button" onClick={() => onExercise(clin)}>
+            Exercise
+          </button>
+        ) : null}{" "}
+        {!exercised ? (
+          <button type="button" onClick={() => onRemove(clin)}>
+            Delete
+          </button>
+        ) : null}
+      </td>
+    </tr>
+  );
 }
 
 function policyFromAward(detail) {
@@ -60,6 +121,7 @@ function modFromAward(detail) {
 
 export default function Award() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [award, setAward] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -120,11 +182,22 @@ export default function Award() {
   });
   const [statuses, setStatuses] = useState([]);
   const [agencies, setAgencies] = useState([]);
+  const [instruments, setInstruments] = useState([]);
+  const [mechanisms, setMechanisms] = useState([]);
+  const [phases, setPhases] = useState([]);
+  const [awardTypes, setAwardTypes] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [costBases, setCostBases] = useState([]);
+  const [deleteCode, setDeleteCode] = useState("");
+  const [clinForm, setClinForm] = useState(emptyClinForm);
   const [headerForm, setHeaderForm] = useState({
+    short_code: "",
     title: "",
     agency: "",
+    instrument_code: "",
+    mechanism_code: "",
+    phase_code: "",
+    type_code: "",
     status_code: "active",
     funded_through: "",
   });
@@ -174,6 +247,10 @@ export default function Award() {
     setPipelineKinds(lookups.pipeline_kinds || []);
     setStatuses(lookups.statuses || []);
     setAgencies(lookups.agencies || []);
+    setInstruments(lookups.instruments || []);
+    setMechanisms(lookups.mechanisms || []);
+    setPhases(lookups.phases || []);
+    setAwardTypes(lookups.award_types || []);
     setTemplates(lookups.rate_policy_templates || []);
     setCostBases(lookups.cost_bases || []);
     if (!assignForm.person_id && personList.length) {
@@ -221,13 +298,110 @@ export default function Award() {
       await api(`/awards/${id}`, {
         method: "PATCH",
         body: {
+          short_code: headerForm.short_code,
           title: headerForm.title,
           agency: headerForm.agency,
+          instrument_code: headerForm.instrument_code,
+          mechanism_code: headerForm.mechanism_code,
+          phase_code: headerForm.phase_code,
+          type_code: headerForm.type_code,
           status_code: headerForm.status_code,
           funded_through: headerForm.funded_through || null,
         },
       });
       setNotice("Award header saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function closeAward() {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}`, {
+        method: "PATCH",
+        body: { status_code: "closed" },
+      });
+      setNotice("Award closed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteAward(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (deleteCode !== award.short_code) {
+      setError("Type the award short code to confirm delete.");
+      return;
+    }
+    try {
+      await api(`/awards/${id}`, { method: "DELETE" });
+      navigate("/portfolio");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function addClin(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/clins`, {
+        method: "POST",
+        body: {
+          clin_number: clinForm.clin_number,
+          description: clinForm.description || null,
+          amount_cents: parseDollarsToCents(clinForm.dollars) ?? 0,
+          is_option: clinForm.is_option,
+        },
+      });
+      setClinForm(emptyClinForm());
+      setNotice("CLIN saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function saveClin(clin, dollars) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/clins/${clin.clin_id}`, {
+        method: "PATCH",
+        body: { amount_cents: parseDollarsToCents(dollars) ?? 0 },
+      });
+      setNotice("CLIN updated.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function exerciseClin(clin) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/clins/${clin.clin_id}/exercise`, { method: "POST", body: {} });
+      setNotice("CLIN exercised. Record a mod if funded remaining should change.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeClin(clin) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/clins/${clin.clin_id}`, { method: "DELETE" });
+      setNotice("CLIN removed.");
       await load();
     } catch (err) {
       setError(err.message);
@@ -608,10 +782,20 @@ export default function Award() {
       <div className="card">
         <h2>Award header</h2>
         <p className="muted">
-          Status and title. Money and PoP changes belong on a modification.
+          Identity and classification. Money and PoP changes belong on a modification.
+          Type can change only before charges or commitments exist.
         </p>
         <form onSubmit={saveHeader}>
           <div className="row">
+            <div>
+              <label>Short code</label>
+              <input
+                value={headerForm.short_code}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, short_code: event.target.value }))
+                }
+              />
+            </div>
             <div>
               <label>Title</label>
               <input
@@ -662,8 +846,188 @@ export default function Award() {
               />
             </div>
           </div>
+          <div className="row">
+            <div>
+              <label>Instrument</label>
+              <select
+                value={headerForm.instrument_code}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, instrument_code: event.target.value }))
+                }
+              >
+                {instruments.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Mechanism</label>
+              <select
+                value={headerForm.mechanism_code}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, mechanism_code: event.target.value }))
+                }
+              >
+                {mechanisms.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Phase</label>
+              <select
+                value={headerForm.phase_code}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, phase_code: event.target.value }))
+                }
+              >
+                {phases.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Type</label>
+              <select
+                value={headerForm.type_code}
+                disabled={Boolean(award.type_locked)}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, type_code: event.target.value }))
+                }
+              >
+                {awardTypes.map((row) => (
+                  <option key={row.type_code} value={row.type_code}>
+                    {row.type_code}
+                  </option>
+                ))}
+              </select>
+              {award.type_locked ? (
+                <p className="muted">Type is locked after charges or commitments.</p>
+              ) : null}
+            </div>
+          </div>
           <p>
             <button type="submit">Save header</button>
+          </p>
+        </form>
+        {award.status_code !== "closed" ? (
+          <p>
+            <button type="button" onClick={closeAward}>
+              Close award
+            </button>
+          </p>
+        ) : (
+          <p className="muted">This award is closed.</p>
+        )}
+        {award.can_delete ? (
+          <form onSubmit={deleteAward}>
+            <p className="muted">
+              This award has no posted activity. Delete it, or close it instead.
+            </p>
+            <div className="row">
+              <div>
+                <label>Type {award.short_code} to delete</label>
+                <input
+                  value={deleteCode}
+                  onChange={(event) => setDeleteCode(event.target.value)}
+                />
+              </div>
+            </div>
+            <p>
+              <button type="submit">Delete unused award</button>
+            </p>
+          </form>
+        ) : (
+          <p className="muted">This award has posted activity, so it cannot be deleted.</p>
+        )}
+      </div>
+      <div className="card">
+        <h2>CLINs</h2>
+        <p className="muted">
+          Unexercised options are pipeline money. Exercising drops that figure; it does not
+          change funded remaining.
+        </p>
+        {(award.clins || []).length ? (
+          <table>
+            <thead>
+              <tr>
+                <th>CLIN</th>
+                <th>Description</th>
+                <th>Amount</th>
+                <th>Option</th>
+                <th>Exercised</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(award.clins || []).map((clin) => (
+                <ClinRow
+                  key={clin.clin_id}
+                  clin={clin}
+                  onSave={saveClin}
+                  onExercise={exerciseClin}
+                  onRemove={removeClin}
+                />
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="muted">No CLINs yet.</p>
+        )}
+        <form onSubmit={addClin}>
+          <div className="row">
+            <div>
+              <label>Number</label>
+              <input
+                required
+                value={clinForm.clin_number}
+                onChange={(event) =>
+                  setClinForm((current) => ({ ...current, clin_number: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Description</label>
+              <input
+                value={clinForm.description}
+                onChange={(event) =>
+                  setClinForm((current) => ({ ...current, description: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Amount ($)</label>
+              <input
+                value={clinForm.dollars}
+                onChange={(event) =>
+                  setClinForm((current) => ({ ...current, dollars: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Option</label>
+              <select
+                value={clinForm.is_option ? "1" : "0"}
+                onChange={(event) =>
+                  setClinForm((current) => ({
+                    ...current,
+                    is_option: event.target.value === "1",
+                  }))
+                }
+              >
+                <option value="0">no</option>
+                <option value="1">yes</option>
+              </select>
+            </div>
+          </div>
+          <p>
+            <button type="submit">Add CLIN</button>
           </p>
         </form>
       </div>
