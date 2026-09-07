@@ -741,20 +741,23 @@ Dated rates, capacity, assignments, and policies stay append-only when they
 priced or posted money (D5). A **typo** is not history.
 
 - **Unused:** no posted `charge` snapshots this row (`person_rate_id` /
-  `policy_id`). Assignments and capacity never post. Open compliance,
-  unlinked documents, and unposted instruments are unused. `DELETE` is
-  204. If this row had closed a previous open dated row, reopen that
-  predecessor (`effective_to` repaired to abut the next remaining row, or
-  null).
+  `policy_id`). Assignments and capacity never post. Open or cancelled
+  purchase/travel commitments (not posted, not an instrument share), open
+  compliance, unlinked documents, and unposted instruments are unused.
+  `DELETE` is 204. If this row had closed a previous open dated row,
+  reopen that predecessor (`effective_to` repaired to abut the next
+  remaining row, or null). Cancel remains for a real purchase that will
+  not happen; Delete removes a typo so it does not linger as cancelled.
 - **End:** `PATCH` `effective_to` (and assignment hours) on a plan row
   that should stop. Prefer End when the fact was real; Delete when it was
   a mistake.
 - **Consumed:** a charge used this rate or policy, a timesheet used this
-  task, a commitment on the instrument is posted, or the person has a
-  timesheet/charge/audit-as-actor. **409**. Correction is a new dated
-  row, deactivate, or close — not an in-place rewrite. Award mods stay
-  append-only (record a correcting mod). Posted charges are not reversed
-  in this phase. Audit rows are never deleted (D19).
+  task, a commitment on the instrument is posted, a purchase/travel row
+  is posted, or the person has a timesheet/charge/audit-as-actor. **409**.
+  The UI still shows Delete on the row and reports that error. Correction
+  is a new dated row, deactivate, or close — not an in-place rewrite.
+  Award mods stay append-only (record a correcting mod). Posted charges
+  are not reversed in this phase. Audit rows are never deleted (D19).
 
 `PATCH /people/{id}` may set `display_name`, `email`, `hire_date`,
 `term_date`, and `labor_category` without a login. Role/active still

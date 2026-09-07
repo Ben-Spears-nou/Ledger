@@ -344,6 +344,27 @@ def cancel_commitment(session: Session, row: Commitment, *, actor_id: int | None
     return row
 
 
+def delete_commitment(session: Session, row: Commitment, *, actor_id: int | None) -> None:
+    """Remove an unused purchase or travel row (D45). Posted history stays."""
+    if row.status_code == "posted":
+        raise CommitmentError("cannot delete a posted commitment")
+    if row.instrument_id is not None:
+        raise CommitmentError("cannot delete an instrument share; delete the instrument instead")
+    commitment_id = row.commitment_id
+    award_id = row.award_id
+    kind = row.kind
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="commitment_delete",
+        entity_type="commitment",
+        entity_id=commitment_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id, "kind": kind},
+    )
+
+
 def create_instrument(
     session: Session, payload: InstrumentIn, *, actor_id: int | None
 ) -> Instrument:

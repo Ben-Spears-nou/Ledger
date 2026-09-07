@@ -45,6 +45,7 @@ AUDIT_ACTIONS = (
     "clin_update",
     "commitment_cancel",
     "commitment_create",
+    "commitment_delete",
     "commitment_post",
     "commitment_update",
     "compliance_create",

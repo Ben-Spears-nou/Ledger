@@ -282,20 +282,20 @@ export default function Instruments() {
               })}
             </tbody>
           </table>
-          {row.status_code === "open" ? (
-            <p>
+          <p>
+            {row.status_code === "open" ? (
               <button type="button" onClick={() => postInstrument(row.instrument_id)}>
                 Post
-              </button>{" "}
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => deleteInstrument(row.instrument_id)}
-              >
-                Delete
               </button>
-            </p>
-          ) : null}
+            ) : null}{" "}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => deleteInstrument(row.instrument_id)}
+            >
+              Delete
+            </button>
+          </p>
         </div>
       ))}
     </>

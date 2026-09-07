@@ -348,20 +348,23 @@ export default function People() {
     }
   }
 
-  async function removePerson() {
+  async function removePerson(personId) {
+    const id = personId ?? factsForm.person_id;
     setError("");
     setNotice("");
     try {
-      await api(`/people/${factsForm.person_id}`, { method: "DELETE" });
+      await api(`/people/${id}`, { method: "DELETE" });
       setNotice("Person removed.");
-      setFactsForm({
-        person_id: "",
-        display_name: "",
-        email: "",
-        hire_date: "",
-        term_date: "",
-        labor_category: "",
-      });
+      if (String(factsForm.person_id) === String(id)) {
+        setFactsForm({
+          person_id: "",
+          display_name: "",
+          email: "",
+          hire_date: "",
+          term_date: "",
+          labor_category: "",
+        });
+      }
       await load(weekStart);
     } catch (err) {
       setError(err.message);
@@ -427,10 +430,18 @@ export default function People() {
       !assignForm.award_id ||
       (String(task.award_id) === String(assignForm.award_id) && task.status_code === "open"),
   );
-  const selectedRates = rateForm.person_id ? ratesByPerson[Number(rateForm.person_id)] || [] : [];
-  const selectedCapacityHistory = capacityForm.person_id
-    ? capacityByPerson[Number(capacityForm.person_id)] || []
-    : [];
+  const allRates = people.flatMap((person) =>
+    (ratesByPerson[person.person_id] || []).map((row) => ({
+      ...row,
+      display_name: person.display_name,
+    })),
+  );
+  const allCapacity = people.flatMap((person) =>
+    (capacityByPerson[person.person_id] || []).map((row) => ({
+      ...row,
+      display_name: person.display_name,
+    })),
+  );
   const selectedFacts = people.find(
     (person) => String(person.person_id) === String(factsForm.person_id),
   );
@@ -439,9 +450,8 @@ export default function People() {
     <>
       <h1>People</h1>
       <p className="muted">
-        Add teammates and a base rate here. Capacity and planned hours are informational and never
-        block a timesheet. Delete removes a typo; End stops a real assignment. A rate that priced
-        posted time cannot be deleted.
+        Delete is on each row. End stops a real assignment. If Delete fails, that row already
+        posted or is still in use — deactivate or add a new dated row instead.
       </p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
@@ -631,6 +641,7 @@ export default function People() {
               <th>Role</th>
               <th>Active</th>
               <th>Current hourly</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -654,11 +665,72 @@ export default function People() {
                       <span className="muted"> from {rate.effective_from}</span>
                     ) : null}
                   </td>
+                  <td className="actions">
+                    <button type="button" className="secondary" onClick={() => fillFacts(person)}>
+                      Edit
+                    </button>
+                    {rate ? (
+                      <button type="button" className="secondary" onClick={() => removeRate(rate)}>
+                        Delete rate
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => removePerson(person.person_id)}
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="card">
+        <h2>Assignments</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Person</th>
+              <th>Award</th>
+              <th>Task</th>
+              <th>Hours/week</th>
+              <th>From</th>
+              <th>To</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {assignments.map((row) => (
+              <tr key={row.assignment_id}>
+                <td>{personName[row.person_id] || row.person_id}</td>
+                <td>
+                  <Link to={`/awards/${row.award_id}`}>
+                    {awardCode[row.award_id] || `#${row.award_id}`}
+                  </Link>
+                </td>
+                <td>{row.task_id ? taskCode[row.task_id] || row.task_id : "—"}</td>
+                <td>{row.hours_per_week}</td>
+                <td>{row.effective_from}</td>
+                <td>{row.effective_to || "open"}</td>
+                <td className="actions">
+                  {row.effective_to ? null : (
+                    <button type="button" className="secondary" onClick={() => endAssignment(row)}>
+                      End
+                    </button>
+                  )}
+                  <button type="button" className="secondary" onClick={() => removeAssignment(row)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {assignments.length === 0 ? <p className="muted">No assignments yet.</p> : null}
       </div>
 
       <div className="card">
@@ -738,19 +810,15 @@ export default function People() {
               </div>
             </div>
             <p>
-              <button type="submit">Save person</button>
-              {selectedFacts?.can_delete ? (
-                <>
-                  {" "}
-                  <button type="button" className="secondary" onClick={removePerson}>
-                    Delete person
-                  </button>
-                </>
-              ) : null}
+              <button type="submit">Save person</button>{" "}
+              <button type="button" className="secondary" onClick={() => removePerson()}>
+                Delete person
+              </button>
             </p>
             {selectedFacts && !selectedFacts.can_delete ? (
               <p className="muted">
-                This person has timesheets, charges, or audit history. Deactivate the login instead.
+                Delete will fail if this person has timesheets, charges, or audit history.
+                Deactivate the login instead.
               </p>
             ) : null}
           </form>
@@ -853,7 +921,7 @@ export default function People() {
 
       <div className="card">
         <h2>Set base rate</h2>
-        <p className="muted">A new row closes the previous open rate. Delete a typo; posted labor keeps the old row.</p>
+        <p className="muted">A new row closes the previous open rate. Delete a typo on the row. Posted labor keeps the old row (you will see an error).</p>
         <form onSubmit={addRate}>
           <div className="row">
             <div>
@@ -941,6 +1009,7 @@ export default function People() {
         <table>
           <thead>
             <tr>
+              <th>Person</th>
               <th>From</th>
               <th>To</th>
               <th>Hourly</th>
@@ -949,13 +1018,14 @@ export default function People() {
             </tr>
           </thead>
           <tbody>
-            {selectedRates.map((row) => (
+            {allRates.map((row) => (
               <tr key={row.person_rate_id}>
+                <td>{row.display_name}</td>
                 <td>{row.effective_from}</td>
                 <td>{row.effective_to || "open"}</td>
                 <td>{formatCents(row.base_rate_cents)}</td>
                 <td>{row.hours_per_year || "—"}</td>
-                <td>
+                <td className="actions">
                   <button type="button" className="secondary" onClick={() => removeRate(row)}>
                     Delete
                   </button>
@@ -1054,6 +1124,7 @@ export default function People() {
         <table>
           <thead>
             <tr>
+              <th>Person</th>
               <th>From</th>
               <th>To</th>
               <th>Hours/week</th>
@@ -1061,12 +1132,13 @@ export default function People() {
             </tr>
           </thead>
           <tbody>
-            {selectedCapacityHistory.map((row) => (
+            {allCapacity.map((row) => (
               <tr key={row.person_capacity_id}>
+                <td>{row.display_name}</td>
                 <td>{row.effective_from}</td>
                 <td>{row.effective_to || "open"}</td>
                 <td>{row.hours_per_week}</td>
-                <td>
+                <td className="actions">
                   <button type="button" className="secondary" onClick={() => removeCapacity(row)}>
                     Delete
                   </button>
@@ -1159,51 +1231,6 @@ export default function People() {
             <button type="submit">Save assignment</button>
           </p>
         </form>
-      </div>
-
-      <div className="card">
-        <h2>Assignments</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Person</th>
-              <th>Award</th>
-              <th>Task</th>
-              <th>Hours/week</th>
-              <th>From</th>
-              <th>To</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {assignments.map((row) => (
-              <tr key={row.assignment_id}>
-                <td>{personName[row.person_id] || row.person_id}</td>
-                <td>
-                  <Link to={`/awards/${row.award_id}`}>
-                    {awardCode[row.award_id] || `#${row.award_id}`}
-                  </Link>
-                </td>
-                <td>{row.task_id ? taskCode[row.task_id] || row.task_id : "—"}</td>
-                <td>{row.hours_per_week}</td>
-                <td>{row.effective_from}</td>
-                <td>{row.effective_to || "open"}</td>
-                <td>
-                  {row.effective_to ? null : (
-                    <>
-                      <button type="button" className="secondary" onClick={() => endAssignment(row)}>
-                        End
-                      </button>{" "}
-                    </>
-                  )}
-                  <button type="button" className="secondary" onClick={() => removeAssignment(row)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </>
   );

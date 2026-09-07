@@ -140,28 +140,28 @@ export default function Compliance() {
                 <td>
                   <span className="status">{row.status_code}</span>
                 </td>
-                <td>
+                <td className="actions">
                   {row.status_code === "open" ? (
                     <>
                       <button type="button" onClick={() => setStatus(row.compliance_item_id, "done")}>
                         Done
-                      </button>{" "}
+                      </button>
                       <button
                         type="button"
                         className="secondary"
                         onClick={() => setStatus(row.compliance_item_id, "waived")}
                       >
                         Waive
-                      </button>{" "}
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => removeItem(row.compliance_item_id)}
-                      >
-                        Delete
                       </button>
                     </>
                   ) : null}
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => removeItem(row.compliance_item_id)}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}

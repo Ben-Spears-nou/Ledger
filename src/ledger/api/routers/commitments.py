@@ -21,6 +21,7 @@ from ledger.services.commitments import (
     create_instrument,
     create_purchase,
     create_travel,
+    delete_commitment,
     delete_instrument,
     list_commitments,
     list_instruments,
@@ -141,6 +142,22 @@ def cancel_one_commitment(
         raise _http(exc) from exc
     session.flush()
     return serialize_commitment(row)
+
+
+@commitments_router.delete("/{commitment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_commitment(
+    commitment_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused purchase or travel commitment (D45)."""
+    row = session.get(Commitment, commitment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "commitment not found")
+    try:
+        delete_commitment(session, row, actor_id=admin.user_account_id)
+    except CommitmentError as exc:
+        raise _http(exc) from exc
 
 
 @instruments_router.get("", response_model=list[InstrumentOut])

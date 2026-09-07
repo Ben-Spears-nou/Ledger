@@ -765,6 +765,18 @@ export default function Award() {
     }
   }
 
+  async function removeCommitment(commitmentId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/commitments/${commitmentId}`, { method: "DELETE" });
+      setNotice("Commitment removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function addDocument(event) {
     event.preventDefault();
     setError("");
@@ -1732,12 +1744,12 @@ export default function Award() {
                 <td>
                   <span className="status">{task.status_code}</span>
                 </td>
-                <td>
+                <td className="actions">
                   {task.status_code === "open" ? (
                     <button type="button" className="secondary" onClick={() => closeTask(task.task_id)}>
                       Close
                     </button>
-                  ) : null}{" "}
+                  ) : null}
                   <button type="button" className="secondary" onClick={() => deleteTask(task.task_id)}>
                     Delete
                   </button>
@@ -1797,13 +1809,11 @@ export default function Award() {
                   <td>{row.hours_per_week}</td>
                   <td>{row.effective_from}</td>
                   <td>{row.effective_to || "open"}</td>
-                  <td>
+                  <td className="actions">
                     {row.effective_to ? null : (
-                      <>
-                        <button type="button" className="secondary" onClick={() => endAssignment(row)}>
-                          End
-                        </button>{" "}
-                      </>
+                      <button type="button" className="secondary" onClick={() => endAssignment(row)}>
+                        End
+                      </button>
                     )}
                     <button type="button" className="secondary" onClick={() => removeAssignment(row)}>
                       Delete
@@ -2068,12 +2078,12 @@ export default function Award() {
                   )}
                 </td>
                 <td>{row.description || row.vendor || "—"}</td>
-                <td>
+                <td className="actions">
                   {row.status_code === "open" ? (
                     <>
                       <button type="button" onClick={() => postCommitment(row.commitment_id)}>
                         Post
-                      </button>{" "}
+                      </button>
                       <button
                         type="button"
                         className="secondary"
@@ -2083,6 +2093,13 @@ export default function Award() {
                       </button>
                     </>
                   ) : null}
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => removeCommitment(row.commitment_id)}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}
@@ -2275,28 +2292,28 @@ export default function Award() {
                 <td>
                   <span className="status">{row.status_code}</span>
                 </td>
-                <td>
+                <td className="actions">
                   {row.status_code === "open" ? (
                     <>
                       <button type="button" onClick={() => setComplianceStatus(row.compliance_item_id, "done")}>
                         Done
-                      </button>{" "}
+                      </button>
                       <button
                         type="button"
                         className="secondary"
                         onClick={() => setComplianceStatus(row.compliance_item_id, "waived")}
                       >
                         Waive
-                      </button>{" "}
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => removeCompliance(row.compliance_item_id)}
-                      >
-                        Delete
                       </button>
                     </>
                   ) : null}
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => removeCompliance(row.compliance_item_id)}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}

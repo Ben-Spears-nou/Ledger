@@ -894,6 +894,10 @@ not rewritten (D45, D5). No new tables. Alembic head stays
 - Open compliance: `DELETE` (do not require waive).
 - Unposted instrument: `DELETE` (remove open share commitments). Posted
   share 409.
+- Open or cancelled purchase/travel: `DELETE /commitments/{id}` (remove
+  the row). Posted 409. Instrument shares 409 (delete the instrument).
+- People/Award UI: Delete on each roster, rate, capacity, assignment,
+  task, and commitment row. Show the button even when delete will 409.
 - Employees 403. D18 unchanged.
 
 **Acceptance criteria**
@@ -911,7 +915,8 @@ not rewritten (D45, D5). No new tables. Alembic head stays
 - Document with a compliance link is 409; unlinked document DELETE 204.
   Open compliance DELETE 204.
 - Unposted instrument DELETE 204; remaining does not keep those
-  commitments. Employee 403 on the new routes.
+  commitments. Open purchase DELETE 204; remaining drops; posted
+  purchase 409. Employee 403 on the new routes.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–10.
 
@@ -931,9 +936,9 @@ UI map:
 - `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8); table + as-of (Phase 10)
 - `/staffing` — forward staffing, utilization, scenario (Phase 10)
 - `/awards/new` — admin award wizard (Phase 8)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10); End/Delete unused assignment/task/policy/document/open compliance (Phase 11)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10); End/Delete on assignment/task/policy/document/open compliance/open purchase rows (Phase 11)
 - `/approvals` — submitted time (Phase 2.5); warnings (Phase 10)
-- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9); facts PATCH, End/Delete unused rate/capacity/assignment/person (Phase 11)
+- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9); facts PATCH; Delete on roster, rate, capacity, and assignment rows (Phase 11)
 - `/instruments` — shared costs and splits (Phase 4); unused unposted delete (Phase 11)
 - `/compliance` — due dates across awards (Phase 5); delete open item (Phase 11)
 - `/alerts` — 75% and PoP warnings (Phase 6)

@@ -31,6 +31,7 @@ def test_alembic_head_unchanged_and_lookups(client: TestClient) -> None:
     assert "person_rate_delete" in actions
     assert "rate_policy_delete" in actions
     assert "instrument_delete" in actions
+    assert "commitment_delete" in actions
     versions = [
         path.name
         for path in (PROJECT_ROOT / "alembic" / "versions").glob("*.py")
@@ -330,6 +331,69 @@ def test_document_and_open_compliance_delete(client: TestClient) -> None:
     )
 
 
+def test_open_purchase_delete_clears_remaining(client: TestClient) -> None:
+    admin = login(client)
+    headers = auth_header(admin)
+    award = _award(
+        client, admin, short_code="P11BUY", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
+    )
+    created = client.post(
+        "/purchases",
+        json={
+            "award_id": award["award_id"],
+            "category_code": "equipment",
+            "amount_cents": 10_000,
+            "description": "typo scope",
+            "effective_date": "2026-04-01",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    assert _remaining(client, admin, award["award_id"])["committed_cents"] == 10_000
+    gone = client.delete(f"/commitments/{created.json()['commitment_id']}", headers=headers)
+    assert gone.status_code == 204, gone.text
+    assert _remaining(client, admin, award["award_id"])["committed_cents"] == 0
+
+    posted = client.post(
+        "/purchases",
+        json={
+            "award_id": award["award_id"],
+            "category_code": "equipment",
+            "amount_cents": 5_000,
+            "description": "keep",
+            "effective_date": "2026-04-02",
+        },
+        headers=headers,
+    )
+    assert posted.status_code == 201, posted.text
+    client.post(f"/commitments/{posted.json()['commitment_id']}/post", headers=headers)
+    blocked = client.delete(f"/commitments/{posted.json()['commitment_id']}", headers=headers)
+    assert blocked.status_code == 409, blocked.text
+
+    other = _award(
+        client, admin, short_code="P11BUY2", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
+    )
+    split = client.post(
+        "/instruments",
+        json={
+            "short_code": "P11-SHARE",
+            "title": "Share",
+            "amount_cents": 2_000,
+            "category_code": "equipment",
+            "effective_from": "2026-06-01",
+            "shares": [
+                {"award_id": award["award_id"], "share_pct": 5000},
+                {"award_id": other["award_id"], "share_pct": 5000},
+            ],
+        },
+        headers=headers,
+    )
+    assert split.status_code == 201, split.text
+    share_id = split.json()["commitments"][0]["commitment_id"]
+    share_blocked = client.delete(f"/commitments/{share_id}", headers=headers)
+    assert share_blocked.status_code == 409, share_blocked.text
+
+
 def test_unposted_instrument_delete_clears_remaining(client: TestClient) -> None:
     admin = login(client)
     headers = auth_header(admin)
@@ -485,6 +549,20 @@ def test_employee_forbidden_and_d18_unchanged(client: TestClient) -> None:
     )
     assert (
         client.delete(f"/instruments/{instrument['instrument_id']}", headers=emp).status_code == 403
+    )
+    purchase = client.post(
+        "/purchases",
+        json={
+            "award_id": award["award_id"],
+            "category_code": "equipment",
+            "amount_cents": 1_000,
+            "description": "emp",
+            "effective_date": "2026-04-01",
+        },
+        headers=headers,
+    ).json()
+    assert (
+        client.delete(f"/commitments/{purchase['commitment_id']}", headers=emp).status_code == 403
     )
 
     picker = client.get("/awards", params={"as": "picker"}, headers=emp)

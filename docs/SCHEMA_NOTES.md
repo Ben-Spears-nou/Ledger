@@ -175,4 +175,5 @@ Home, staffing, search, and close are computed. No extra remaining columns.
 
 No new tables. `DELETE` unused register rows and `PATCH` assignment
 `effective_to` (D45). Posted `charge` snapshots (`person_rate_id`,
-`policy_id`) still block delete. Award mods stay append-only.
+`policy_id`) still block delete. Open purchase/travel rows may be
+deleted (not only cancelled). Award mods stay append-only.
