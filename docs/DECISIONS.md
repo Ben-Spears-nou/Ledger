@@ -244,8 +244,10 @@ CLINs / unused-award delete on `/awards/:id`. Phase 10 may add `/home`
 (operations board), `/staffing` (forward plan vs capacity vs remaining),
 search in the shell, a portfolio table, planned-vs-logged hours on
 `/me/week` (no dollars), approve warnings, funding expectations, expected
-invoice dates, and compliance↔document links. Do not add screens beyond
-that map. No GL, payroll, email, or agency e-file (D13).
+invoice dates, and compliance↔document links. Phase 11 may add End/Delete
+on unused people registers, award tasks/policies/documents/compliance, and
+unposted instruments (D45). Do not add screens beyond that map. No GL,
+payroll, email, or agency e-file (D13).
 
 ---
 
@@ -298,7 +300,7 @@ password), password change, person/rate create, award create, policy
 revision, week submit / approve / return, task create, assignment create,
 capacity create, commitment create / post / cancel, instrument create,
 document create / file, compliance create / status, pipeline create /
-update / delete. Do not
+update / delete, and Phase 11 unused-row deletes (D45). Do not
 update or delete audit rows. `GET /admin/audit` is admin-only JSON.
 Phase 7 adds the UI and optional filters (D35), not a second table.
 
@@ -730,3 +732,32 @@ Home, staffing, utilization, burn, alerts, and the portfolio table share
 an `as_of` or `week_start` (Monday). Month-close on `/home` lists weeks
 not approved through that Monday, draft periods, and open commitments.
 The charges CSV (D36) remains the dump; close does not post to a GL.
+
+---
+
+## D45 — Unused rows can be deleted; consumed history is not rewritten
+
+Dated rates, capacity, assignments, and policies stay append-only when they
+priced or posted money (D5). A **typo** is not history.
+
+- **Unused:** no posted `charge` snapshots this row (`person_rate_id` /
+  `policy_id`). Assignments and capacity never post. Open compliance,
+  unlinked documents, and unposted instruments are unused. `DELETE` is
+  204. If this row had closed a previous open dated row, reopen that
+  predecessor (`effective_to` repaired to abut the next remaining row, or
+  null).
+- **End:** `PATCH` `effective_to` (and assignment hours) on a plan row
+  that should stop. Prefer End when the fact was real; Delete when it was
+  a mistake.
+- **Consumed:** a charge used this rate or policy, a timesheet used this
+  task, a commitment on the instrument is posted, or the person has a
+  timesheet/charge/audit-as-actor. **409**. Correction is a new dated
+  row, deactivate, or close — not an in-place rewrite. Award mods stay
+  append-only (record a correcting mod). Posted charges are not reversed
+  in this phase. Audit rows are never deleted (D19).
+
+`PATCH /people/{id}` may set `display_name`, `email`, `hire_date`,
+`term_date`, and `labor_category` without a login. Role/active still
+require a login (D38). Last active admin cannot be deleted.
+
+Employees 403. D18 unchanged. Remaining views unchanged. No new tables.

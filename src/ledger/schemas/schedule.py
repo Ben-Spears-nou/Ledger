@@ -54,6 +54,13 @@ class AssignmentOut(BaseModel):
     effective_to: str | None
 
 
+class AssignmentUpdate(BaseModel):
+    """End or revise planned hours. Does not post (D7, D45)."""
+
+    hours_per_week: float | None = Field(default=None, gt=0)
+    effective_to: str | None = None
+
+
 class CapacityIn(BaseModel):
     """New dated available hours/week. Zero is allowed (D24)."""
 

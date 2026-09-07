@@ -26,6 +26,7 @@ export default function People() {
   const [rows, setRows] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [ratesByPerson, setRatesByPerson] = useState({});
+  const [capacityByPerson, setCapacityByPerson] = useState({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [personForm, setPersonForm] = useState(emptyPersonForm);
@@ -55,6 +56,14 @@ export default function People() {
     is_active: true,
     new_password: "",
   });
+  const [factsForm, setFactsForm] = useState({
+    person_id: "",
+    display_name: "",
+    email: "",
+    hire_date: "",
+    term_date: "",
+    labor_category: "",
+  });
 
   async function load(start) {
     const monday = mondayOnOrBefore(start);
@@ -71,8 +80,15 @@ export default function People() {
         await api(`/people/${person.person_id}/rates`),
       ]),
     );
+    const capacityEntries = await Promise.all(
+      personList.map(async (person) => [
+        person.person_id,
+        await api(`/people/${person.person_id}/capacity`),
+      ]),
+    );
     setPeople(personList);
     setRatesByPerson(Object.fromEntries(rateEntries));
+    setCapacityByPerson(Object.fromEntries(capacityEntries));
     setAwards(awardList.filter((award) => award.status_code !== "closed"));
     setTasks(taskList);
     setRows(capacity);
@@ -101,6 +117,18 @@ export default function People() {
         role_code: selected?.role_code || "employee",
         is_active: selected?.is_active !== false,
       }));
+    }
+    const factsId = factsForm.person_id || firstId;
+    if (factsId) {
+      const selected = personList.find((person) => String(person.person_id) === String(factsId));
+      setFactsForm({
+        person_id: String(factsId),
+        display_name: selected?.display_name || "",
+        email: selected?.email || "",
+        hire_date: selected?.hire_date || "",
+        term_date: selected?.term_date || "",
+        labor_category: selected?.labor_category || "",
+      });
     }
   }
 
@@ -282,6 +310,115 @@ export default function People() {
     }
   }
 
+  function endDateFor(from) {
+    const today = todayIso();
+    return today < from ? from : today;
+  }
+
+  function fillFacts(person) {
+    setFactsForm({
+      person_id: person ? String(person.person_id) : "",
+      display_name: person?.display_name || "",
+      email: person?.email || "",
+      hire_date: person?.hire_date || "",
+      term_date: person?.term_date || "",
+      labor_category: person?.labor_category || "",
+    });
+  }
+
+  async function saveFacts(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/people/${factsForm.person_id}`, {
+        method: "PATCH",
+        body: {
+          display_name: factsForm.display_name,
+          email: factsForm.email || null,
+          hire_date: factsForm.hire_date || null,
+          term_date: factsForm.term_date || null,
+          labor_category: factsForm.labor_category || null,
+        },
+      });
+      setNotice("Person saved.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removePerson() {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/people/${factsForm.person_id}`, { method: "DELETE" });
+      setNotice("Person removed.");
+      setFactsForm({
+        person_id: "",
+        display_name: "",
+        email: "",
+        hire_date: "",
+        term_date: "",
+        labor_category: "",
+      });
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function endAssignment(row) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/assignments/${row.assignment_id}`, {
+        method: "PATCH",
+        body: { effective_to: endDateFor(row.effective_from) },
+      });
+      setNotice("Assignment ended.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeAssignment(row) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/assignments/${row.assignment_id}`, { method: "DELETE" });
+      setNotice("Assignment removed.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeRate(row) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/people/${row.person_id}/rates/${row.person_rate_id}`, { method: "DELETE" });
+      setNotice("Base rate removed.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeCapacity(row) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/people/${row.person_id}/capacity/${row.person_capacity_id}`, { method: "DELETE" });
+      setNotice("Capacity row removed.");
+      await load(weekStart);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   const personName = Object.fromEntries(people.map((row) => [row.person_id, row.display_name]));
   const awardCode = Object.fromEntries(awards.map((row) => [row.award_id, row.short_code]));
   const taskCode = Object.fromEntries(tasks.map((row) => [row.task_id, row.short_code]));
@@ -291,13 +428,20 @@ export default function People() {
       (String(task.award_id) === String(assignForm.award_id) && task.status_code === "open"),
   );
   const selectedRates = rateForm.person_id ? ratesByPerson[Number(rateForm.person_id)] || [] : [];
+  const selectedCapacityHistory = capacityForm.person_id
+    ? capacityByPerson[Number(capacityForm.person_id)] || []
+    : [];
+  const selectedFacts = people.find(
+    (person) => String(person.person_id) === String(factsForm.person_id),
+  );
 
   return (
     <>
       <h1>People</h1>
       <p className="muted">
         Add teammates and a base rate here. Capacity and planned hours are informational and never
-        block a timesheet.
+        block a timesheet. Delete removes a typo; End stops a real assignment. A rate that priced
+        posted time cannot be deleted.
       </p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
@@ -518,6 +662,104 @@ export default function People() {
       </div>
 
       <div className="card">
+        <h2>Person facts</h2>
+        <p className="muted">Correct name, email, hire/term, or labor category. Unused people can be deleted.</p>
+        {people.length ? (
+          <form onSubmit={saveFacts}>
+            <div className="row">
+              <div>
+                <label>Person</label>
+                <select
+                  value={factsForm.person_id}
+                  onChange={(event) => {
+                    const selected = people.find(
+                      (person) => String(person.person_id) === event.target.value,
+                    );
+                    fillFacts(selected);
+                  }}
+                >
+                  {people.map((person) => (
+                    <option key={person.person_id} value={person.person_id}>
+                      {person.display_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Display name</label>
+                <input
+                  required
+                  value={factsForm.display_name}
+                  onChange={(event) =>
+                    setFactsForm((current) => ({ ...current, display_name: event.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label>Email</label>
+                <input
+                  type="email"
+                  value={factsForm.email}
+                  onChange={(event) =>
+                    setFactsForm((current) => ({ ...current, email: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="row">
+              <div>
+                <label>Hire date</label>
+                <input
+                  type="date"
+                  value={factsForm.hire_date}
+                  onChange={(event) =>
+                    setFactsForm((current) => ({ ...current, hire_date: event.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label>Term date</label>
+                <input
+                  type="date"
+                  value={factsForm.term_date}
+                  onChange={(event) =>
+                    setFactsForm((current) => ({ ...current, term_date: event.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label>Labor category</label>
+                <input
+                  value={factsForm.labor_category}
+                  onChange={(event) =>
+                    setFactsForm((current) => ({ ...current, labor_category: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <p>
+              <button type="submit">Save person</button>
+              {selectedFacts?.can_delete ? (
+                <>
+                  {" "}
+                  <button type="button" className="secondary" onClick={removePerson}>
+                    Delete person
+                  </button>
+                </>
+              ) : null}
+            </p>
+            {selectedFacts && !selectedFacts.can_delete ? (
+              <p className="muted">
+                This person has timesheets, charges, or audit history. Deactivate the login instead.
+              </p>
+            ) : null}
+          </form>
+        ) : (
+          <p className="muted">No people yet.</p>
+        )}
+      </div>
+
+      <div className="card">
         <h2>Login</h2>
         <p className="muted">
           Reset password, change role, or deactivate. You cannot remove the last active admin.
@@ -611,7 +853,7 @@ export default function People() {
 
       <div className="card">
         <h2>Set base rate</h2>
-        <p className="muted">A new row closes the previous open rate. History is kept.</p>
+        <p className="muted">A new row closes the previous open rate. Delete a typo; posted labor keeps the old row.</p>
         <form onSubmit={addRate}>
           <div className="row">
             <div>
@@ -703,6 +945,7 @@ export default function People() {
               <th>To</th>
               <th>Hourly</th>
               <th>Hours/year</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -712,6 +955,11 @@ export default function People() {
                 <td>{row.effective_to || "open"}</td>
                 <td>{formatCents(row.base_rate_cents)}</td>
                 <td>{row.hours_per_year || "—"}</td>
+                <td>
+                  <button type="button" className="secondary" onClick={() => removeRate(row)}>
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -803,6 +1051,30 @@ export default function People() {
             <button type="submit">Save capacity</button>
           </p>
         </form>
+        <table>
+          <thead>
+            <tr>
+              <th>From</th>
+              <th>To</th>
+              <th>Hours/week</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {selectedCapacityHistory.map((row) => (
+              <tr key={row.person_capacity_id}>
+                <td>{row.effective_from}</td>
+                <td>{row.effective_to || "open"}</td>
+                <td>{row.hours_per_week}</td>
+                <td>
+                  <button type="button" className="secondary" onClick={() => removeCapacity(row)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="card">
@@ -900,6 +1172,7 @@ export default function People() {
               <th>Hours/week</th>
               <th>From</th>
               <th>To</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -915,6 +1188,18 @@ export default function People() {
                 <td>{row.hours_per_week}</td>
                 <td>{row.effective_from}</td>
                 <td>{row.effective_to || "open"}</td>
+                <td>
+                  {row.effective_to ? null : (
+                    <>
+                      <button type="button" className="secondary" onClick={() => endAssignment(row)}>
+                        End
+                      </button>{" "}
+                    </>
+                  )}
+                  <button type="button" className="secondary" onClick={() => removeAssignment(row)}>
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

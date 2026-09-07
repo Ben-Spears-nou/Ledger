@@ -21,6 +21,7 @@ from ledger.services.commitments import (
     create_instrument,
     create_purchase,
     create_travel,
+    delete_instrument,
     list_commitments,
     list_instruments,
     patch_commitment,
@@ -40,7 +41,7 @@ award_commitments_router = APIRouter(prefix="/awards", tags=["commitments"])
 def _http(exc: CommitmentError) -> HTTPException:
     message = str(exc).lower()
     code = status.HTTP_400_BAD_REQUEST
-    if "already" in message:
+    if "already" in message or "cannot delete" in message:
         code = status.HTTP_409_CONFLICT
     return HTTPException(code, str(exc))
 
@@ -195,3 +196,19 @@ def post_one_instrument(
         raise _http(exc) from exc
     session.flush()
     return serialize_instrument(session, row)
+
+
+@instruments_router.delete("/{instrument_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_instrument(
+    instrument_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unposted instrument and its open share commitments (D45)."""
+    row = session.get(Instrument, instrument_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "instrument not found")
+    try:
+        delete_instrument(session, row, actor_id=admin.user_account_id)
+    except CommitmentError as exc:
+        raise _http(exc) from exc

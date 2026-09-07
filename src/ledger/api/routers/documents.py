@@ -21,6 +21,8 @@ from ledger.services.documents import (
     attach_file,
     create_compliance,
     create_document,
+    delete_compliance,
+    delete_document,
     list_compliance,
     list_documents,
     patch_compliance,
@@ -41,7 +43,7 @@ def _http(exc: DocumentError, *, not_found: bool = False) -> HTTPException:
     missing = {"award not found", "document not found", "compliance item not found"}
     if not_found or message in missing:
         return HTTPException(status.HTTP_404_NOT_FOUND, message)
-    if "already has a file" in message:
+    if "already has a file" in message or "cannot delete" in message:
         return HTTPException(status.HTTP_409_CONFLICT, message)
     return HTTPException(status.HTTP_400_BAD_REQUEST, message)
 
@@ -139,6 +141,22 @@ async def post_document_file(
     return serialize_document(row)
 
 
+@documents_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_document(
+    document_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unlinked document and its file (D45)."""
+    row = session.get(Document, document_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    try:
+        delete_document(session, row, actor_id=admin.user_account_id)
+    except DocumentError as exc:
+        raise _http(exc) from exc
+
+
 @award_compliance_router.get("/{award_id}/compliance", response_model=list[ComplianceOut])
 def get_award_compliance(
     award_id: int,
@@ -216,3 +234,19 @@ def patch_compliance_item(
         raise _http(exc) from exc
     award = require_award(session, row.award_id)
     return serialize_compliance(row, award)
+
+
+@compliance_router.delete("/{compliance_item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_compliance_item(
+    compliance_item_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an open due date (D45)."""
+    row = session.get(ComplianceItem, compliance_item_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "compliance item not found")
+    try:
+        delete_compliance(session, row, actor_id=admin.user_account_id)
+    except DocumentError as exc:
+        raise _http(exc) from exc

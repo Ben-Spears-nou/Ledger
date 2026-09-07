@@ -168,3 +168,11 @@ EAC and runway are computed (D33). Alerts are computed on read (D34): no alert t
 | `funding_expectation` | Expected increment. Not remaining, not pipeline, not a CLIN (D42) |
 
 Home, staffing, search, and close are computed. No extra remaining columns.
+
+---
+
+## Unused delete (Phase 11)
+
+No new tables. `DELETE` unused register rows and `PATCH` assignment
+`effective_to` (D45). Posted `charge` snapshots (`person_rate_id`,
+`policy_id`) still block delete. Award mods stay append-only.

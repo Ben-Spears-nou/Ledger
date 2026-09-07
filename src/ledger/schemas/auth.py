@@ -50,8 +50,13 @@ class PersonCreate(BaseModel):
 
 
 class PersonUpdate(BaseModel):
-    """Admin patch of an existing login (D38). Username is not changed."""
+    """Admin patch of person facts and/or login (D38, D45). Username is not changed."""
 
+    display_name: str | None = None
+    email: str | None = None
+    hire_date: str | None = None
+    term_date: str | None = None
+    labor_category: str | None = None
     role_code: str | None = None
     is_active: bool | None = None
 

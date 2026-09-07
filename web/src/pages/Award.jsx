@@ -16,6 +16,11 @@ function dollarsToCents(value) {
   return Math.round(Number(value) * 100);
 }
 
+function endDateFor(from) {
+  const today = todayIso();
+  return today < from ? from : today;
+}
+
 function headerFromAward(detail) {
   return {
     short_code: detail.short_code || "",
@@ -517,6 +522,85 @@ export default function Award() {
         method: "PATCH",
         body: { status_code: "closed" },
       });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteTask(taskId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/tasks/${taskId}`, { method: "DELETE" });
+      setNotice("Task removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function endAssignment(row) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/assignments/${row.assignment_id}`, {
+        method: "PATCH",
+        body: { effective_to: endDateFor(row.effective_from) },
+      });
+      setNotice("Assignment ended.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeAssignment(row) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/assignments/${row.assignment_id}`, { method: "DELETE" });
+      setNotice("Assignment removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deletePolicy() {
+    const policyId = award?.current_policy?.policy_id;
+    if (!policyId) {
+      return;
+    }
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/rate-policies/${policyId}`, { method: "DELETE" });
+      setNotice("Rate policy revision removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeDocument(documentId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/documents/${documentId}`, { method: "DELETE" });
+      setNotice("Document removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeCompliance(itemId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/compliance/${itemId}`, { method: "DELETE" });
+      setNotice("Due date removed.");
       await load();
     } catch (err) {
       setError(err.message);
@@ -1212,7 +1296,10 @@ export default function Award() {
             {pctToInput(award.current_policy.ga_pct)}% · fee{" "}
             {pctToInput(award.current_policy.fee_pct)}%
             {award.current_policy.fee_in_burden ? " (fee in burden)" : ""} · from{" "}
-            {award.current_policy.effective_from}
+            {award.current_policy.effective_from}{" "}
+            <button type="button" className="secondary" onClick={deletePolicy}>
+              Delete unused revision
+            </button>
           </p>
         ) : (
           <p className="muted">No current policy.</p>
@@ -1650,7 +1737,10 @@ export default function Award() {
                     <button type="button" className="secondary" onClick={() => closeTask(task.task_id)}>
                       Close
                     </button>
-                  ) : null}
+                  ) : null}{" "}
+                  <button type="button" className="secondary" onClick={() => deleteTask(task.task_id)}>
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}
@@ -1693,6 +1783,7 @@ export default function Award() {
               <th>Hours/week</th>
               <th>From</th>
               <th>To</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -1706,6 +1797,18 @@ export default function Award() {
                   <td>{row.hours_per_week}</td>
                   <td>{row.effective_from}</td>
                   <td>{row.effective_to || "open"}</td>
+                  <td>
+                    {row.effective_to ? null : (
+                      <>
+                        <button type="button" className="secondary" onClick={() => endAssignment(row)}>
+                          End
+                        </button>{" "}
+                      </>
+                    )}
+                    <button type="button" className="secondary" onClick={() => removeAssignment(row)}>
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               );
             })}
@@ -2050,6 +2153,7 @@ export default function Award() {
               <th>Title</th>
               <th>Date</th>
               <th>File</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -2074,6 +2178,15 @@ export default function Award() {
                   ) : (
                     "—"
                   )}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => removeDocument(row.document_id)}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}
@@ -2174,6 +2287,13 @@ export default function Award() {
                         onClick={() => setComplianceStatus(row.compliance_item_id, "waived")}
                       >
                         Waive
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => removeCompliance(row.compliance_item_id)}
+                      >
+                        Delete
                       </button>
                     </>
                   ) : null}

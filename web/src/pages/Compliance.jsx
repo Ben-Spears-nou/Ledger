@@ -57,6 +57,18 @@ export default function Compliance() {
     }
   }
 
+  async function removeItem(itemId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/compliance/${itemId}`, { method: "DELETE" });
+      setNotice("Due date removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <>
       <h1>Compliance</h1>
@@ -140,6 +152,13 @@ export default function Compliance() {
                         onClick={() => setStatus(row.compliance_item_id, "waived")}
                       >
                         Waive
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => removeItem(row.compliance_item_id)}
+                      >
+                        Delete
                       </button>
                     </>
                   ) : null}

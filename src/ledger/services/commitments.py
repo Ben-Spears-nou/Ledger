@@ -437,3 +437,35 @@ def post_instrument(session: Session, row: Instrument, *, actor_id: int | None) 
     row.status_code = "posted"
     session.flush()
     return row
+
+
+def delete_instrument(session: Session, row: Instrument, *, actor_id: int | None) -> None:
+    """Remove an unposted instrument and its open share commitments (D45)."""
+    children = list(
+        session.scalars(select(Commitment).where(Commitment.instrument_id == row.instrument_id))
+    )
+    if any(child.status_code == "posted" for child in children):
+        raise CommitmentError("cannot delete an instrument that has posted shares")
+    instrument_id = row.instrument_id
+    short = row.short_code
+    for child in children:
+        session.delete(child)
+    session.flush()
+    shares = list(
+        session.scalars(
+            select(InstrumentShare).where(InstrumentShare.instrument_id == instrument_id)
+        )
+    )
+    for share in shares:
+        session.delete(share)
+    session.flush()
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="instrument_delete",
+        entity_type="instrument",
+        entity_id=instrument_id,
+        actor_user_id=actor_id,
+        detail={"short_code": short},
+    )

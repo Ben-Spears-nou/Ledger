@@ -55,6 +55,6 @@ Screens in `web/`: `/login`, `/home` (admin: this week’s decisions),
 `/me/week`, `/me/password`, `/approvals`,
 `/awards/new` (admin: create an award), `/awards/:id`, `/portfolio`,
 `/staffing` (admin: plan vs capacity vs remaining),
-`/people` (admin: people, logins, role/active/reset password, base rates, capacity, assignments),
+`/people` (admin: people, logins, role/active/reset password, base rates, capacity, assignments; End/Delete unused rows),
 `/instruments` (admin: shared costs), `/compliance` (admin: due dates),
 `/alerts` (admin: 75% and PoP), `/audit` (admin: event log and charges CSV).

@@ -285,3 +285,47 @@ def patch_compliance(
         detail={"status_code": row.status_code},
     )
     return row
+
+
+def delete_document(session: Session, row: Document, *, actor_id: int | None) -> None:
+    """Remove an unlinked document and its file (D45)."""
+    linked = session.scalar(
+        select(ComplianceItem.compliance_item_id)
+        .where(ComplianceItem.document_id == row.document_id)
+        .limit(1)
+    )
+    if linked is not None:
+        raise DocumentError("cannot delete a document linked from compliance")
+    path = stored_path(row)
+    if path is not None and path.is_file():
+        path.unlink()
+    document_id = row.document_id
+    award_id = row.award_id
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="document_delete",
+        entity_type="document",
+        entity_id=document_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )
+
+
+def delete_compliance(session: Session, row: ComplianceItem, *, actor_id: int | None) -> None:
+    """Remove an open due date (D45)."""
+    if row.status_code != "open":
+        raise DocumentError("cannot delete a completed compliance item")
+    item_id = row.compliance_item_id
+    award_id = row.award_id
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="compliance_delete",
+        entity_type="compliance_item",
+        entity_id=item_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )

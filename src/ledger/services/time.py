@@ -232,6 +232,40 @@ def add_person_rate(
     return row
 
 
+def delete_person_rate(session: Session, row: PersonRate, *, actor_id: int | None) -> None:
+    """Remove an unused base-rate row and reopen the predecessor (D45)."""
+    used = session.scalar(
+        select(Charge.charge_id).where(Charge.person_rate_id == row.person_rate_id).limit(1)
+    )
+    if used is not None:
+        raise TimeError("cannot delete a rate that priced a posted charge")
+    from ledger.services.schedule import reopen_dated_predecessor
+
+    siblings = list(
+        session.scalars(
+            select(PersonRate)
+            .where(
+                PersonRate.person_id == row.person_id,
+                PersonRate.person_rate_id != row.person_rate_id,
+            )
+            .order_by(PersonRate.effective_from)
+        )
+    )
+    rate_id = row.person_rate_id
+    person_id = row.person_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="person_rate_delete",
+        entity_type="person_rate",
+        entity_id=rate_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id},
+    )
+
+
 def _time_code_row(session: Session, code: str) -> TimeCode:
     row = session.get(TimeCode, code)
     if row is None:

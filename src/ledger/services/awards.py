@@ -316,6 +316,45 @@ def revise_rate_policy(
     return policy
 
 
+def delete_rate_policy(session: Session, policy: AwardRatePolicy, *, actor_id: int | None) -> None:
+    """Remove an unused policy revision and reopen the predecessor (D45)."""
+    used = session.scalar(
+        select(Charge.charge_id).where(Charge.policy_id == policy.policy_id).limit(1)
+    )
+    if used is not None:
+        raise AwardError("cannot delete a rate policy that priced a posted charge")
+    from ledger.services.schedule import reopen_dated_predecessor
+
+    siblings = list(
+        session.scalars(
+            select(AwardRatePolicy).where(
+                AwardRatePolicy.award_id == policy.award_id,
+                AwardRatePolicy.policy_id != policy.policy_id,
+            )
+        )
+    )
+    for override in session.scalars(
+        select(AwardRateOverride).where(AwardRateOverride.policy_id == policy.policy_id)
+    ):
+        session.delete(override)
+    session.flush()
+    reopen_dated_predecessor(siblings, policy)
+    policy_id = policy.policy_id
+    award_id = policy.award_id
+    policy.labor_budget_line_id = None
+    session.flush()
+    session.delete(policy)
+    session.flush()
+    record_event(
+        session,
+        action="rate_policy_delete",
+        entity_type="award_rate_policy",
+        entity_id=policy_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )
+
+
 def apply_mod(
     session: Session, award: Award, payload: AwardModCreate, *, actor_id: int | None
 ) -> AwardMod:

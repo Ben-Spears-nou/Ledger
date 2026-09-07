@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D44). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D45). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,7 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–10.** There is no Phase 11 in this plan.
+**This document specifies Phases 0–11.** There is no Phase 12 in this plan.
 
 ---
 
@@ -867,6 +867,56 @@ Turn registers into Monday decisions (D40–D44). Small schema:
 
 ---
 
+## Phase 11 — Undo unused rows; end dated ones
+
+Mistakes are removable. History that already priced or posted money is
+not rewritten (D45, D5). No new tables. Alembic head stays
+`0008_phase10_operations`.
+
+**Tasks**
+
+- Record D45. Lookups `audit_actions` include the new names.
+- Assignments: `PATCH /assignments/{id}` (`effective_to`, `hours_per_week`);
+  `DELETE /assignments/{id}` (always; reopen predecessor for the same
+  person+award+task). UI End + Delete on `/people` and `/awards/:id`.
+- Rates: `DELETE /people/{id}/rates/{rate_id}` 204 if no charge snapshots
+  the row; reopen previous. Else 409.
+- Capacity: list history; `DELETE /people/{id}/capacity/{id}` always;
+  reopen previous.
+- People: `PATCH` facts (`display_name`, `email`, `hire_date`,
+  `term_date`, `labor_category`). `DELETE /people/{id}` when unused (no
+  timesheet, charge, or audit-as-actor); last admin 409.
+- Unused task with no timesheet line and no assignment: `DELETE`.
+  Close remains for used tasks.
+- Unused rate-policy revision: `DELETE` if no charge used `policy_id`;
+  reopen previous. Award mods are not deleted.
+- Documents: `DELETE` if no compliance row points at them; remove file.
+- Open compliance: `DELETE` (do not require waive).
+- Unposted instrument: `DELETE` (remove open share commitments). Posted
+  share 409.
+- Employees 403. D18 unchanged.
+
+**Acceptance criteria**
+
+- Alembic head remains `0008_phase10_operations`. No new tables.
+- Delete a mistaken assignment: 204; staffing/prefill omit it; a previous
+  assignment on that award reopens if this row had closed it.
+- Unused base rate delete: 204; previous rate is open; a rate that priced
+  an approved week is 409.
+- Capacity typo delete updates `/capacity` for that week.
+- PATCH display name; unused person DELETE is 204; person with an
+  approved week is 409. Last admin DELETE is 409.
+- Unused task DELETE 204; task with a timesheet line is 409.
+- Unused policy revision DELETE 204; policy on a posted charge is 409.
+- Document with a compliance link is 409; unlinked document DELETE 204.
+  Open compliance DELETE 204.
+- Unposted instrument DELETE 204; remaining does not keep those
+  commitments. Employee 403 on the new routes.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–10.
+
+---
+
 ## Later work (not a numbered phase)
 
 Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
@@ -881,10 +931,10 @@ UI map:
 - `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8); table + as-of (Phase 10)
 - `/staffing` — forward staffing, utilization, scenario (Phase 10)
 - `/awards/new` — admin award wizard (Phase 8)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10); End/Delete unused assignment/task/policy/document/open compliance (Phase 11)
 - `/approvals` — submitted time (Phase 2.5); warnings (Phase 10)
-- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9)
-- `/instruments` — shared costs and splits (Phase 4)
-- `/compliance` — due dates across awards (Phase 5)
+- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9); facts PATCH, End/Delete unused rate/capacity/assignment/person (Phase 11)
+- `/instruments` — shared costs and splits (Phase 4); unused unposted delete (Phase 11)
+- `/compliance` — due dates across awards (Phase 5); delete open item (Phase 11)
 - `/alerts` — 75% and PoP warnings (Phase 6)
 - `/audit` — event log and charges CSV (Phase 7); dropdown filters (Phase 8)

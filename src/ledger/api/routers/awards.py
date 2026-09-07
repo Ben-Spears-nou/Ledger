@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db, require_admin
-from ledger.models import Award, Clin, UserAccount
+from ledger.models import Award, AwardRatePolicy, Clin, UserAccount
 from ledger.schemas.awards import (
     AwardCardOut,
     AwardCreate,
@@ -29,6 +29,7 @@ from ledger.services.awards import (
     create_award,
     delete_award,
     delete_clin,
+    delete_rate_policy,
     exercise_clin,
     remaining_for,
     revise_rate_policy,
@@ -45,7 +46,7 @@ router = APIRouter(prefix="/awards", tags=["awards"])
 
 def _http(exc: AwardError) -> HTTPException:
     message = str(exc)
-    if "posted activity" in message:
+    if "posted activity" in message or "cannot delete" in message:
         return HTTPException(status.HTTP_409_CONFLICT, message)
     return HTTPException(status.HTTP_400_BAD_REQUEST, message)
 
@@ -243,6 +244,27 @@ def post_rate_policy(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     session.flush()
     return serialize_policy(session, policy)
+
+
+@router.delete(
+    "/{award_id}/rate-policies/{policy_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_rate_policy(
+    award_id: int,
+    policy_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused rate-policy revision (D45)."""
+    _get_award(session, award_id)
+    policy = session.get(AwardRatePolicy, policy_id)
+    if policy is None or policy.award_id != award_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rate policy not found")
+    try:
+        delete_rate_policy(session, policy, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
 
 
 @router.get("/{award_id}/remaining", response_model=AwardRemainingOut)
