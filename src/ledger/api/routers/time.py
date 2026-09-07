@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import display_name_for, get_current_user, get_db, require_admin
-from ledger.models import Person, TimesheetLine, TimesheetPeriod, UserAccount
+from ledger.models import Person, PersonRate, TimesheetLine, TimesheetPeriod, UserAccount
 from ledger.schemas.time import (
     PersonRateIn,
     PersonRateOut,
@@ -20,10 +20,13 @@ from ledger.schemas.time import (
     WeekOut,
     WeekPut,
 )
+from ledger.services.operations import planned_hours_for_week
 from ledger.services.time import (
     TimeError,
     add_person_rate,
     approve_period,
+    approve_warnings,
+    delete_person_rate,
     get_or_create_period,
     hundredths_to_hours,
     period_hours_total,
@@ -41,7 +44,7 @@ rates_router = APIRouter(tags=["people"])
 def _http(exc: TimeError, conflict: bool = False) -> HTTPException:
     code = status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST
     message = str(exc).lower()
-    if "already" in message or "exceed" in message:
+    if "already" in message or "exceed" in message or "cannot delete" in message:
         code = status.HTTP_409_CONFLICT
     return HTTPException(code, str(exc))
 
@@ -70,6 +73,7 @@ def _employee_week(session: Session, period: TimesheetPeriod) -> WeekOut:
             )
             for line in lines
         ],
+        planned=planned_hours_for_week(session, period.person_id, period.week_start),
     )
 
 
@@ -120,6 +124,7 @@ def _admin_week(session: Session, period: TimesheetPeriod) -> WeekAdminOut:
         hours_total=period_hours_total(session, period),
         amount_cents=total_amount,
         lines=admin_lines,
+        warnings=approve_warnings(session, period),
     )
 
 
@@ -242,8 +247,6 @@ def list_rates(
     _admin: UserAccount = Depends(require_admin),
 ) -> list[PersonRateOut]:
     """Dated base rates for one person."""
-    from ledger.models import PersonRate
-
     person = session.get(Person, person_id)
     if person is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "person not found")
@@ -300,3 +303,23 @@ def post_rate(
         base_rate_cents=row.base_rate_cents,
         hours_per_year=row.hours_per_year,
     )
+
+
+@rates_router.delete("/people/{person_id}/rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_rate(
+    person_id: int,
+    rate_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused base rate and reopen the predecessor (D45)."""
+    person = session.get(Person, person_id)
+    if person is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "person not found")
+    row = session.get(PersonRate, rate_id)
+    if row is None or row.person_id != person_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rate not found")
+    try:
+        delete_person_rate(session, row, actor_id=admin.user_account_id)
+    except TimeError as exc:
+        raise _http(exc) from exc

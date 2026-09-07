@@ -19,6 +19,7 @@ from ledger.models import (
 from ledger.schemas.schedule import (
     AssignmentCreate,
     AssignmentOut,
+    AssignmentUpdate,
     CapacityIn,
     CapacityOut,
     CapacityWeekRow,
@@ -45,6 +46,31 @@ def hours_per_week_to_hundredths(hours: float, *, allow_zero: bool = False) -> i
     if hundredths == 0 and not allow_zero:
         raise ScheduleError("hours must be greater than zero")
     return hundredths
+
+
+def _day_before(iso_date: str) -> str:
+    parsed = date.fromisoformat(iso_date)
+    return (parsed - timedelta(days=1)).isoformat()
+
+
+def reopen_dated_predecessor(rows: list, deleted) -> None:
+    """If ``deleted`` had closed a previous open row, repair that predecessor (D45)."""
+    predecessors = [
+        row for row in rows if row.effective_from < deleted.effective_from and row.effective_to
+    ]
+    if not predecessors:
+        return
+    prev = max(predecessors, key=lambda row: row.effective_from)
+    closed_on = _day_before(deleted.effective_from)
+    if prev.effective_to not in {closed_on, deleted.effective_from}:
+        return
+    later = [row for row in rows if row.effective_from > prev.effective_from]
+    if not later:
+        prev.effective_to = None
+        return
+    nxt = min(later, key=lambda row: row.effective_from)
+    closed = _day_before(nxt.effective_from)
+    prev.effective_to = closed if closed >= prev.effective_from else nxt.effective_from
 
 
 def serialize_task(task: Task) -> TaskCardOut:
@@ -179,6 +205,32 @@ def update_task(session: Session, task: Task, payload: TaskUpdate) -> Task:
     return task
 
 
+def delete_task(session: Session, task: Task, *, actor_id: int | None) -> None:
+    """Remove an unused task (D45). Close remains for used tasks."""
+    if session.scalar(
+        select(TimesheetLine.timesheet_line_id)
+        .where(TimesheetLine.task_id == task.task_id)
+        .limit(1)
+    ):
+        raise ScheduleError("cannot delete a task that has timesheet lines")
+    if session.scalar(
+        select(Assignment.assignment_id).where(Assignment.task_id == task.task_id).limit(1)
+    ):
+        raise ScheduleError("cannot delete a task that has assignments")
+    task_id = task.task_id
+    award_id = task.award_id
+    session.delete(task)
+    session.flush()
+    record_event(
+        session,
+        action="task_delete",
+        entity_type="task",
+        entity_id=task_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )
+
+
 def close_open_assignments(
     session: Session,
     person_id: int,
@@ -247,6 +299,62 @@ def create_assignment(
         },
     )
     return row
+
+
+def update_assignment(
+    session: Session, row: Assignment, payload: AssignmentUpdate, *, actor_id: int | None
+) -> Assignment:
+    """End or revise planned hours. Does not post."""
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise ScheduleError("hours_per_week or effective_to is required")
+    if "hours_per_week" in data and data["hours_per_week"] is not None:
+        row.hours_hundredths_per_week = hours_per_week_to_hundredths(data["hours_per_week"])
+    if "effective_to" in data:
+        value = data["effective_to"]
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ScheduleError("effective_to must be YYYY-MM-DD") from exc
+            if value < row.effective_from:
+                raise ScheduleError("effective_to must be on or after effective_from")
+            row.effective_to = value
+        else:
+            row.effective_to = None
+    session.flush()
+    record_event(
+        session,
+        action="assignment_update",
+        entity_type="assignment",
+        entity_id=row.assignment_id,
+        actor_user_id=actor_id,
+        detail={"person_id": row.person_id, "award_id": row.award_id},
+    )
+    return row
+
+
+def delete_assignment(session: Session, row: Assignment, *, actor_id: int | None) -> None:
+    """Remove a planned assignment and reopen the predecessor (D45)."""
+    siblings = [
+        item
+        for item in list_assignments(session, person_id=row.person_id, award_id=row.award_id)
+        if item.assignment_id != row.assignment_id and item.task_id == row.task_id
+    ]
+    assignment_id = row.assignment_id
+    person_id = row.person_id
+    award_id = row.award_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="assignment_delete",
+        entity_type="assignment",
+        entity_id=assignment_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id, "award_id": award_id},
+    )
 
 
 def list_assignments(
@@ -363,6 +471,28 @@ def add_person_capacity(
     return row
 
 
+def delete_person_capacity(session: Session, row: PersonCapacity, *, actor_id: int | None) -> None:
+    """Remove a capacity row and reopen the predecessor (D45)."""
+    siblings = [
+        item
+        for item in list_capacity(session, row.person_id)
+        if item.person_capacity_id != row.person_capacity_id
+    ]
+    capacity_id = row.person_capacity_id
+    person_id = row.person_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="capacity_delete",
+        entity_type="person_capacity",
+        entity_id=capacity_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id},
+    )
+
+
 def list_capacity(session: Session, person_id: int) -> list[PersonCapacity]:
     """Dated capacity rows for one person."""
     return list(
@@ -384,6 +514,11 @@ def _as_of_capacity(session: Session, person_id: int, as_of: str) -> PersonCapac
         )
         .order_by(PersonCapacity.effective_from.desc())
     )
+
+
+def as_of_capacity(session: Session, person_id: int, as_of: str) -> PersonCapacity | None:
+    """Capacity row in effect on ``as_of``."""
+    return _as_of_capacity(session, person_id, as_of)
 
 
 def capacity_for_week(session: Session, week_start: str) -> list[CapacityWeekRow]:

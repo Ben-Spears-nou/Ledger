@@ -47,6 +47,12 @@ def iter_sql_statements(script: str) -> Iterator[str]:
         yield trailing
 
 
+def is_create_index(statement: str) -> bool:
+    """True for CREATE INDEX / CREATE UNIQUE INDEX (defer after ALTER TABLE)."""
+    stripped = statement.lstrip().upper()
+    return stripped.startswith(("CREATE INDEX", "CREATE UNIQUE INDEX"))
+
+
 def is_seed_statement(statement: str) -> bool:
     """Report whether a statement inserts rows (as opposed to defining schema)."""
     return statement.upper().lstrip().startswith("INSERT")

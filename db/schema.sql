@@ -1,4 +1,4 @@
--- Ledger Phase 1–4 schema. SQLite 3.31+.
+-- Ledger Phase 1–10 schema. SQLite 3.31+.
 -- Money is integer cents. Percents are integer hundredths of a percent
 -- (3215 = 32.15%; multiplier is 1 + pct/10000). See docs/SCHEMA_NOTES.md.
 -- db/schema.sql is the source of truth. Do not invent tables here.
@@ -60,16 +60,19 @@ CREATE TABLE IF NOT EXISTS award_type (
     labor_incurred      INTEGER NOT NULL CHECK (labor_incurred IN (0, 1)),
     fee_engine          TEXT NOT NULL CHECK (fee_engine IN ('fixed_pot', 'none')),
     ceiling_warn_pct    INTEGER NOT NULL DEFAULT 75
-        CHECK (ceiling_warn_pct BETWEEN 0 AND 100)
+        CHECK (ceiling_warn_pct BETWEEN 0 AND 100),
+    overrun_policy      TEXT NOT NULL DEFAULT 'warn'
+        CHECK (overrun_policy IN ('stop', 'warn', 'allow'))
 );
 INSERT INTO award_type (
-    type_code, description, enforce_ceiling, labor_incurred, fee_engine, ceiling_warn_pct
+    type_code, description, enforce_ceiling, labor_incurred, fee_engine, ceiling_warn_pct,
+    overrun_policy
 ) VALUES
-    ('CPFF',     'Cost Plus Fixed Fee',          1, 1, 'fixed_pot', 75),
-    ('FFP',      'Firm Fixed Price',             0, 1, 'none',      75),
-    ('TM',       'Time and Materials',           1, 1, 'none',      75),
-    ('grant',    'Cost-reimbursable grant',      1, 1, 'fixed_pot', 75),
-    ('internal', 'Internal / IR&D / B&P',        0, 1, 'none',      75);
+    ('CPFF',     'Cost Plus Fixed Fee',          1, 1, 'fixed_pot', 75, 'stop'),
+    ('FFP',      'Firm Fixed Price',             0, 1, 'none',      75, 'warn'),
+    ('TM',       'Time and Materials',           1, 1, 'none',      75, 'stop'),
+    ('grant',    'Cost-reimbursable grant',      1, 1, 'fixed_pot', 75, 'stop'),
+    ('internal', 'Internal / IR&D / B&P',        0, 1, 'none',      75, 'allow');
 
 CREATE TABLE IF NOT EXISTS award_status (
     status_code  TEXT PRIMARY KEY,
@@ -109,6 +112,51 @@ CREATE TABLE IF NOT EXISTS agency (
     agency_name  TEXT PRIMARY KEY,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS document_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO document_kind (kind_code, description) VALUES
+    ('contract',       'Award / contract / grant document'),
+    ('mod',            'Modification or amendment'),
+    ('report',         'Technical or progress report'),
+    ('invoice',        'Invoice or voucher'),
+    ('correspondence', 'Letter or email record'),
+    ('other',          'Other');
+
+CREATE TABLE IF NOT EXISTS compliance_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO compliance_kind (kind_code, description) VALUES
+    ('technical_report', 'Technical / progress report due'),
+    ('financial_report', 'Financial report due'),
+    ('pop_end',          'Period of performance end'),
+    ('irb',              'Human subjects / IRB'),
+    ('iacuc',            'Animal care / IACUC'),
+    ('property',         'Property or equipment report'),
+    ('invoice',          'Invoice due to the sponsor'),
+    ('other',            'Other obligation');
+
+CREATE TABLE IF NOT EXISTS compliance_status (
+    status_code  TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO compliance_status (status_code, description) VALUES
+    ('open',   'Not finished'),
+    ('done',   'Completed'),
+    ('waived', 'No longer required');
+
+CREATE TABLE IF NOT EXISTS pipeline_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO pipeline_kind (kind_code, description) VALUES
+    ('next_phase', 'Next SBIR/STTR phase or follow-on'),
+    ('commercial', 'Commercial or customer follow-on'),
+    ('proposal',   'Proposal not yet awarded'),
+    ('other',      'Other forecast');
 
 CREATE TABLE IF NOT EXISTS rate_policy_template (
     template_code      TEXT PRIMARY KEY,
@@ -226,6 +274,8 @@ CREATE TABLE IF NOT EXISTS award (
     fee_engine            TEXT NOT NULL CHECK (fee_engine IN ('fixed_pot', 'none')),
     ceiling_warn_pct      INTEGER NOT NULL DEFAULT 75
         CHECK (ceiling_warn_pct BETWEEN 0 AND 100),
+    overrun_policy        TEXT NOT NULL DEFAULT 'warn'
+        CHECK (overrun_policy IN ('stop', 'warn', 'allow')),
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     created_by            INTEGER REFERENCES user_account (user_account_id),
     UNIQUE (organization_id, short_code),
@@ -506,6 +556,7 @@ CREATE TABLE IF NOT EXISTS commitment (
     person_id         INTEGER REFERENCES person (person_id),
     effective_date    TEXT NOT NULL,
     trip_end          TEXT,
+    expected_date     TEXT,
     instrument_id     INTEGER REFERENCES instrument (instrument_id),
     charge_id         INTEGER REFERENCES charge (charge_id),
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
@@ -631,3 +682,90 @@ LEFT JOIN (
       AND c.exercised_at IS NULL
     GROUP BY c.award_id
 ) AS opts ON opts.award_id = a.award_id;
+
+DROP VIEW IF EXISTS v_award_burn_monthly;
+CREATE VIEW v_award_burn_monthly AS
+SELECT
+    ch.award_id AS award_id,
+    substr(ch.work_date, 1, 7) AS year_month,
+    SUM(ch.amount_cents) AS actual_cents
+FROM charge ch
+WHERE ch.award_id IS NOT NULL
+  AND ch.work_date IS NOT NULL
+GROUP BY ch.award_id, substr(ch.work_date, 1, 7);
+
+-- =====================================================================
+-- Documents and compliance (Phase 5). Files are on local disk (D29).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS document (
+    document_id         INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES document_kind (kind_code),
+    title               TEXT NOT NULL,
+    document_date       TEXT,
+    notes               TEXT,
+    original_filename   TEXT,
+    stored_ext          TEXT,
+    content_type        TEXT,
+    size_bytes          INTEGER,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE TABLE IF NOT EXISTS compliance_item (
+    compliance_item_id  INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES compliance_kind (kind_code),
+    title               TEXT NOT NULL,
+    due_date            TEXT NOT NULL,
+    status_code         TEXT NOT NULL REFERENCES compliance_status (status_code),
+    notes               TEXT,
+    completed_at        TEXT,
+    document_id         INTEGER REFERENCES document (document_id),
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_document_award
+    ON document (award_id);
+CREATE INDEX IF NOT EXISTS ix_compliance_award_due
+    ON compliance_item (award_id, due_date);
+CREATE INDEX IF NOT EXISTS ix_compliance_due
+    ON compliance_item (due_date);
+
+-- =====================================================================
+-- Funding expectations (Phase 10). Not remaining (D42).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS funding_expectation (
+    funding_expectation_id  INTEGER PRIMARY KEY,
+    award_id                INTEGER NOT NULL REFERENCES award (award_id),
+    expected_date           TEXT NOT NULL,
+    amount_cents            INTEGER NOT NULL CHECK (amount_cents >= 0),
+    notes                   TEXT,
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by              INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_funding_expectation_award
+    ON funding_expectation (award_id, expected_date);
+
+-- =====================================================================
+-- Pipeline forecast (Phase 6). Not remaining (D32).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS pipeline_node (
+    pipeline_node_id    INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES pipeline_kind (kind_code),
+    title               TEXT NOT NULL,
+    amount_cents        INTEGER NOT NULL CHECK (amount_cents >= 0),
+    expected_date       TEXT,
+    notes               TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_pipeline_node_award
+    ON pipeline_node (award_id);

@@ -44,7 +44,7 @@ header.app a.active {
 }
 
 main {
-  max-width: 960px;
+  max-width: 1100px;
   margin: 1.25rem auto;
   padding: 0 1rem 2rem;
 }
@@ -132,10 +132,72 @@ td {
   vertical-align: top;
 }
 
+td.actions button {
+  margin: 0 0.3rem 0.25rem 0;
+}
+
 .status {
   display: inline-block;
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
   background: #e6e0d4;
   font-size: 0.8rem;
+}
+
+.week-grid-wrap {
+  overflow-x: auto;
+}
+
+table.week-grid {
+  min-width: 860px;
+}
+
+table.week-grid th,
+table.week-grid td {
+  vertical-align: middle;
+}
+
+table.week-grid th.weekend,
+table.week-grid td.weekend {
+  background: #eeeae2;
+}
+
+table.week-grid input.hours {
+  width: 4.25rem;
+  min-width: 4.25rem;
+  text-align: right;
+}
+
+table.week-grid select {
+  min-width: 7rem;
+}
+
+ol.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  padding: 0;
+  margin: 0 0 1rem;
+  list-style: none;
+  color: #5c584f;
+  font-size: 0.9rem;
+}
+
+ol.steps .current {
+  color: #1b1f24;
+  font-weight: 650;
+}
+
+header.app .header-search {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+header.app .header-search input {
+  width: 10rem;
+}
+
+.search-hits {
+  margin: 0.75rem 1.25rem 0;
 }

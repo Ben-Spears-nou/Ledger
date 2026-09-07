@@ -51,6 +51,13 @@ export default function Approvals() {
             <span className="status">{formatCents(week.amount_cents)}</span>
           </h2>
           <p className="muted">{week.hours_total} hours</p>
+          {(week.warnings || []).length ? (
+            <ul>
+              {week.warnings.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          ) : null}
           <table>
             <thead>
               <tr>

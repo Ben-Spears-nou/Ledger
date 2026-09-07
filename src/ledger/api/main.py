@@ -6,6 +6,7 @@ Served as ``uvicorn ledger.api.main:app``. Interactive docs live at ``/docs``.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,24 @@ from ledger.api.routers.commitments import (
     purchases_router,
     travel_router,
 )
+from ledger.api.routers.documents import (
+    award_compliance_router,
+    award_documents_router,
+    compliance_router,
+    documents_router,
+)
+from ledger.api.routers.forecast import (
+    alerts_router,
+    award_burn_router,
+    award_pipeline_router,
+    pipeline_router,
+)
+from ledger.api.routers.operations import (
+    funding_router,
+    home_router,
+    search_router,
+    staffing_router,
+)
 from ledger.api.routers.schedule import (
     assignments_router,
     award_tasks_router,
@@ -26,11 +45,14 @@ from ledger.api.routers.schedule import (
     tasks_router,
 )
 from ledger.api.routers.time import approvals_router, me_router, rates_router
+from ledger.api.spa import DEFAULT_WEB_DIST, install_spa
 from ledger.config import DEFAULT_SECRET_KEY, get_settings
 
 _LOCAL_UI_ORIGINS = (
     "http://127.0.0.1:5173",
     "http://localhost:5173",
+    "http://127.0.0.1:5174",
+    "http://localhost:5174",
 )
 
 logger = logging.getLogger("ledger")
@@ -42,8 +64,8 @@ def warn_if_default_secret() -> None:
         logger.warning("LEDGER_SECRET_KEY is the shipped default; set a new value before sharing.")
 
 
-def create_app() -> FastAPI:
-    """Build the Ledger API."""
+def create_app(web_dist: Path | None = None) -> FastAPI:
+    """Build the Ledger API. ``web_dist`` defaults to ``web/dist`` (D28)."""
     warn_if_default_secret()
     application = FastAPI(
         title="Ledger",
@@ -71,6 +93,18 @@ def create_app() -> FastAPI:
     application.include_router(commitments_router)
     application.include_router(instruments_router)
     application.include_router(award_commitments_router)
+    application.include_router(award_documents_router)
+    application.include_router(documents_router)
+    application.include_router(award_compliance_router)
+    application.include_router(compliance_router)
+    application.include_router(award_pipeline_router)
+    application.include_router(pipeline_router)
+    application.include_router(award_burn_router)
+    application.include_router(alerts_router)
+    application.include_router(home_router)
+    application.include_router(staffing_router)
+    application.include_router(search_router)
+    application.include_router(funding_router)
     application.include_router(me_router)
     application.include_router(approvals_router)
     application.include_router(audit.router)
@@ -80,6 +114,7 @@ def create_app() -> FastAPI:
         """Liveness probe."""
         return {"status": "ok", "version": __version__}
 
+    install_spa(application, DEFAULT_WEB_DIST if web_dist is None else web_dist)
     return application
 
 

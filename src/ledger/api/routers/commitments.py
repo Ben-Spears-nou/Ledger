@@ -9,6 +9,7 @@ from ledger.api.deps import get_db, require_admin
 from ledger.models import Award, Commitment, Instrument, UserAccount
 from ledger.schemas.commitments import (
     CommitmentOut,
+    CommitmentPatch,
     InstrumentIn,
     InstrumentOut,
     PurchaseIn,
@@ -20,8 +21,11 @@ from ledger.services.commitments import (
     create_instrument,
     create_purchase,
     create_travel,
+    delete_commitment,
+    delete_instrument,
     list_commitments,
     list_instruments,
+    patch_commitment,
     post_commitment,
     post_instrument,
     serialize_commitment,
@@ -38,7 +42,7 @@ award_commitments_router = APIRouter(prefix="/awards", tags=["commitments"])
 def _http(exc: CommitmentError) -> HTTPException:
     message = str(exc).lower()
     code = status.HTTP_400_BAD_REQUEST
-    if "already" in message:
+    if "already" in message or "cannot delete" in message:
         code = status.HTTP_409_CONFLICT
     return HTTPException(code, str(exc))
 
@@ -103,6 +107,25 @@ def post_one_commitment(
     return serialize_commitment(row)
 
 
+@commitments_router.patch("/{commitment_id}", response_model=CommitmentOut)
+def patch_one_commitment(
+    commitment_id: int,
+    payload: CommitmentPatch,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> CommitmentOut:
+    """Set expected invoice date (admin)."""
+    row = session.get(Commitment, commitment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "commitment not found")
+    try:
+        row = patch_commitment(session, row, payload, actor_id=admin.user_account_id)
+    except CommitmentError as exc:
+        raise _http(exc) from exc
+    session.flush()
+    return serialize_commitment(row)
+
+
 @commitments_router.post("/{commitment_id}/cancel", response_model=CommitmentOut)
 def cancel_one_commitment(
     commitment_id: int,
@@ -119,6 +142,22 @@ def cancel_one_commitment(
         raise _http(exc) from exc
     session.flush()
     return serialize_commitment(row)
+
+
+@commitments_router.delete("/{commitment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_commitment(
+    commitment_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused purchase or travel commitment (D45)."""
+    row = session.get(Commitment, commitment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "commitment not found")
+    try:
+        delete_commitment(session, row, actor_id=admin.user_account_id)
+    except CommitmentError as exc:
+        raise _http(exc) from exc
 
 
 @instruments_router.get("", response_model=list[InstrumentOut])
@@ -174,3 +213,19 @@ def post_one_instrument(
         raise _http(exc) from exc
     session.flush()
     return serialize_instrument(session, row)
+
+
+@instruments_router.delete("/{instrument_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_instrument(
+    instrument_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unposted instrument and its open share commitments (D45)."""
+    row = session.get(Instrument, instrument_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "instrument not found")
+    try:
+        delete_instrument(session, row, actor_id=admin.user_account_id)
+    except CommitmentError as exc:
+        raise _http(exc) from exc

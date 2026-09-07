@@ -9,7 +9,7 @@ from ledger.models.base import Base, now_default
 
 
 class AuditEvent(Base):
-    """One recorded action. Phase 7 is the UI; this table is Phase 2.5."""
+    """One recorded action. Never update or delete rows (D19, D35)."""
 
     __tablename__ = "audit_event"
 

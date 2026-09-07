@@ -23,7 +23,7 @@ from ledger.models import (
 )
 from ledger.rates import loaded_rate_cents
 from ledger.services.audit import record_event
-from ledger.services.awards import remaining_for
+from ledger.services.awards import line_remaining_map, remaining_for
 
 
 class TimeError(ValueError):
@@ -97,6 +97,23 @@ def _override_for(
             AwardRateOverride.labor_category == person.labor_category,
         )
     )
+
+
+def as_of_rate(session: Session, person_id: int, work_date: str) -> PersonRate | None:
+    """Person base-rate row in effect on ``work_date``."""
+    return _as_of_rate(session, person_id, work_date)
+
+
+def as_of_policy(session: Session, award_id: int, work_date: str) -> AwardRatePolicy | None:
+    """Award rate policy in effect on ``work_date``."""
+    return _as_of_policy(session, award_id, work_date)
+
+
+def override_for(
+    session: Session, policy: AwardRatePolicy, person: Person
+) -> AwardRateOverride | None:
+    """Person or labor-category loaded-rate override, if any."""
+    return _override_for(session, policy, person)
 
 
 @dataclass(frozen=True)
@@ -213,6 +230,40 @@ def add_person_rate(
         detail={"person_id": person.person_id, "effective_from": effective_from},
     )
     return row
+
+
+def delete_person_rate(session: Session, row: PersonRate, *, actor_id: int | None) -> None:
+    """Remove an unused base-rate row and reopen the predecessor (D45)."""
+    used = session.scalar(
+        select(Charge.charge_id).where(Charge.person_rate_id == row.person_rate_id).limit(1)
+    )
+    if used is not None:
+        raise TimeError("cannot delete a rate that priced a posted charge")
+    from ledger.services.schedule import reopen_dated_predecessor
+
+    siblings = list(
+        session.scalars(
+            select(PersonRate)
+            .where(
+                PersonRate.person_id == row.person_id,
+                PersonRate.person_rate_id != row.person_rate_id,
+            )
+            .order_by(PersonRate.effective_from)
+        )
+    )
+    rate_id = row.person_rate_id
+    person_id = row.person_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="person_rate_delete",
+        entity_type="person_rate",
+        entity_id=rate_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id},
+    )
 
 
 def _time_code_row(session: Session, code: str) -> TimeCode:
@@ -385,6 +436,66 @@ def _existing_labor_charge(session: Session, line_id: int) -> Charge | None:
             Charge.reverses_charge_id.is_(None),
         )
     )
+
+
+def approve_warnings(session: Session, period: TimesheetPeriod) -> list[str]:
+    """Informational approve messages (D43). Never used on employee submit."""
+    from ledger.services.schedule import overlapping_assignments
+
+    person = session.get(Person, period.person_id)
+    if person is None:
+        return []
+    lines = session.scalars(
+        select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
+    ).all()
+    hours_by_award: dict[int, int] = {}
+    extras: dict[int, int] = {}
+    for line in lines:
+        code = _time_code_row(session, line.time_code)
+        if not code.consumes_award or line.award_id is None:
+            continue
+        hours_by_award[line.award_id] = hours_by_award.get(line.award_id, 0) + line.hours_hundredths
+        try:
+            preview = preview_labor_line(session, person, line)
+        except TimeError:
+            continue
+        extras[line.award_id] = extras.get(line.award_id, 0) + preview.amount_cents
+    assigned: dict[int, int] = {}
+    for row in overlapping_assignments(session, period.person_id, period.week_start):
+        assigned[row.award_id] = assigned.get(row.award_id, 0) + row.hours_hundredths_per_week
+    warnings: list[str] = []
+    for award_id, hundredths in hours_by_award.items():
+        award = session.get(Award, award_id)
+        if award is None:
+            continue
+        planned = assigned.get(award_id, 0)
+        if hundredths > planned + 1:
+            warnings.append(
+                f"{award.short_code}: logged {hundredths_to_hours(hundredths)}h exceeds "
+                f"assigned {hundredths_to_hours(planned)}h"
+            )
+        extra = extras.get(award_id, 0)
+        remaining = remaining_for(session, award_id)
+        if remaining is None:
+            continue
+        policy = award.overrun_policy or "warn"
+        if policy == "allow":
+            continue
+        if remaining.remaining_funded_cents - extra < 0:
+            warnings.append(
+                f"{award.short_code}: this week would exceed funded remaining "
+                f"({remaining.remaining_funded_cents} cents)"
+            )
+        dated_policy = _as_of_policy(session, award.award_id, period.week_start)
+        if dated_policy is not None and dated_policy.labor_budget_line_id is not None:
+            money = line_remaining_map(session, award.award_id)
+            personnel = money.get(dated_policy.labor_budget_line_id, (0, 0, 0))[2]
+            if personnel - extra < 0:
+                warnings.append(
+                    f"{award.short_code}: this week would exceed remaining personnel "
+                    f"({personnel} cents)"
+                )
+    return warnings
 
 
 def approve_period(

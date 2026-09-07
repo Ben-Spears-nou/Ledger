@@ -47,3 +47,21 @@ class PersonCreate(BaseModel):
     username: str | None = None
     password: str | None = None
     role_code: str = Field(default="employee")
+
+
+class PersonUpdate(BaseModel):
+    """Admin patch of person facts and/or login (D38, D45). Username is not changed."""
+
+    display_name: str | None = None
+    email: str | None = None
+    hire_date: str | None = None
+    term_date: str | None = None
+    labor_category: str | None = None
+    role_code: str | None = None
+    is_active: bool | None = None
+
+
+class AdminPasswordResetIn(BaseModel):
+    """Admin-set password. Does not require the current password."""
+
+    new_password: str = Field(min_length=1)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from shutil import rmtree
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from ledger.db.seed import get_default_organization_id
 from ledger.models import (
     Agency,
+    Assignment,
     Award,
     AwardMod,
     AwardRateOverride,
@@ -18,9 +20,19 @@ from ledger.models import (
     BudgetLine,
     BudgetTemplateLine,
     BudgetVersion,
+    Charge,
     Clin,
+    Commitment,
+    ComplianceItem,
+    Document,
+    FundingExpectation,
+    InstrumentShare,
+    PipelineNode,
     RatePolicyTemplate,
+    Task,
+    TimesheetLine,
 )
+from ledger.models.lookups import AwardInstrument, AwardMechanism, AwardPhase
 from ledger.schemas.awards import (
     AwardCardOut,
     AwardCreate,
@@ -31,13 +43,16 @@ from ledger.schemas.awards import (
     BudgetLineChange,
     BudgetLineIn,
     BudgetLineOut,
+    ClinExerciseIn,
     ClinIn,
     ClinOut,
+    ClinUpdate,
     RateOverrideOut,
     RatePolicyIn,
     RatePolicyOut,
 )
 from ledger.services.audit import record_event
+from ledger.services.pipeline import pipeline_cents_for
 
 
 class AwardError(ValueError):
@@ -179,6 +194,7 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
         labor_incurred=award_type.labor_incurred,
         fee_engine=award_type.fee_engine,
         ceiling_warn_pct=award_type.ceiling_warn_pct,
+        overrun_policy=award_type.overrun_policy,
         created_by=actor_id,
     )
     session.add(award)
@@ -300,6 +316,45 @@ def revise_rate_policy(
     return policy
 
 
+def delete_rate_policy(session: Session, policy: AwardRatePolicy, *, actor_id: int | None) -> None:
+    """Remove an unused policy revision and reopen the predecessor (D45)."""
+    used = session.scalar(
+        select(Charge.charge_id).where(Charge.policy_id == policy.policy_id).limit(1)
+    )
+    if used is not None:
+        raise AwardError("cannot delete a rate policy that priced a posted charge")
+    from ledger.services.schedule import reopen_dated_predecessor
+
+    siblings = list(
+        session.scalars(
+            select(AwardRatePolicy).where(
+                AwardRatePolicy.award_id == policy.award_id,
+                AwardRatePolicy.policy_id != policy.policy_id,
+            )
+        )
+    )
+    for override in session.scalars(
+        select(AwardRateOverride).where(AwardRateOverride.policy_id == policy.policy_id)
+    ):
+        session.delete(override)
+    session.flush()
+    reopen_dated_predecessor(siblings, policy)
+    policy_id = policy.policy_id
+    award_id = policy.award_id
+    policy.labor_budget_line_id = None
+    session.flush()
+    session.delete(policy)
+    session.flush()
+    record_event(
+        session,
+        action="rate_policy_delete",
+        entity_type="award_rate_policy",
+        entity_id=policy_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )
+
+
 def apply_mod(
     session: Session, award: Award, payload: AwardModCreate, *, actor_id: int | None
 ) -> AwardMod:
@@ -418,18 +473,316 @@ def _apply_budget_changes(
             policy.labor_budget_line_id = personnel.budget_line_id
 
 
-def update_award(session: Session, award: Award, payload: AwardUpdate) -> Award:
+def update_award(
+    session: Session, award: Award, payload: AwardUpdate, *, actor_id: int | None = None
+) -> Award:
     """Patch header fields that are not a formal modification."""
+    if payload.short_code is not None:
+        code = payload.short_code.strip()
+        if not code:
+            raise AwardError("short_code is required")
+        taken = session.scalar(
+            select(Award).where(
+                Award.organization_id == award.organization_id,
+                Award.short_code == code,
+                Award.award_id != award.award_id,
+            )
+        )
+        if taken is not None:
+            raise AwardError("short_code already exists")
+        award.short_code = code
     if payload.title is not None:
         award.title = payload.title.strip()
     if payload.agency is not None:
         record_agency(session, payload.agency)
         award.agency = payload.agency.strip()
+    if payload.instrument_code is not None:
+        if session.get(AwardInstrument, payload.instrument_code) is None:
+            raise AwardError(f"unknown instrument: {payload.instrument_code}")
+        award.instrument_code = payload.instrument_code
+    if payload.mechanism_code is not None:
+        if session.get(AwardMechanism, payload.mechanism_code) is None:
+            raise AwardError(f"unknown mechanism: {payload.mechanism_code}")
+        award.mechanism_code = payload.mechanism_code
+    if payload.phase_code is not None:
+        if session.get(AwardPhase, payload.phase_code) is None:
+            raise AwardError(f"unknown phase: {payload.phase_code}")
+        award.phase_code = payload.phase_code
+    if payload.type_code is not None and payload.type_code != award.type_code:
+        if type_is_locked(session, award.award_id):
+            raise AwardError("type_code is locked after charges or commitments exist")
+        award_type = session.get(AwardType, payload.type_code)
+        if award_type is None:
+            raise AwardError(f"unknown award type: {payload.type_code}")
+        award.type_code = payload.type_code
+        award.enforce_ceiling = award_type.enforce_ceiling
+        award.labor_incurred = award_type.labor_incurred
+        award.fee_engine = award_type.fee_engine
+        award.ceiling_warn_pct = award_type.ceiling_warn_pct
+        award.overrun_policy = award_type.overrun_policy
     if payload.status_code is not None:
         award.status_code = payload.status_code
     if payload.funded_through is not None:
         award.funded_through = payload.funded_through
+    if payload.overrun_policy is not None:
+        if payload.overrun_policy not in {"stop", "warn", "allow"}:
+            raise AwardError("overrun_policy must be stop, warn, or allow")
+        award.overrun_policy = payload.overrun_policy
+    session.flush()
+    record_event(
+        session,
+        action="award_update",
+        entity_type="award",
+        entity_id=award.award_id,
+        actor_user_id=actor_id,
+        detail={"short_code": award.short_code, "status_code": award.status_code},
+    )
     return award
+
+
+def type_is_locked(session: Session, award_id: int) -> bool:
+    """True when type may not change (any charge or commitment)."""
+    if session.scalar(select(Charge.charge_id).where(Charge.award_id == award_id).limit(1)):
+        return True
+    return bool(
+        session.scalar(
+            select(Commitment.commitment_id).where(Commitment.award_id == award_id).limit(1)
+        )
+    )
+
+
+def unused_blockers(session: Session, award_id: int) -> list[str]:
+    """Reasons an award cannot be deleted (D39)."""
+    blockers: list[str] = []
+    if session.scalar(select(Charge.charge_id).where(Charge.award_id == award_id).limit(1)):
+        blockers.append("charge")
+    if session.scalar(
+        select(Commitment.commitment_id).where(Commitment.award_id == award_id).limit(1)
+    ):
+        blockers.append("commitment")
+    if session.scalar(
+        select(TimesheetLine.timesheet_line_id).where(TimesheetLine.award_id == award_id).limit(1)
+    ):
+        blockers.append("timesheet_line")
+    if session.scalar(
+        select(InstrumentShare.instrument_share_id)
+        .where(InstrumentShare.award_id == award_id)
+        .limit(1)
+    ):
+        blockers.append("instrument_share")
+    task_ids = select(Task.task_id).where(Task.award_id == award_id)
+    if session.scalar(
+        select(TimesheetLine.timesheet_line_id).where(TimesheetLine.task_id.in_(task_ids)).limit(1)
+    ):
+        blockers.append("timesheet_line")
+    return sorted(set(blockers))
+
+
+def can_delete_award(session: Session, award_id: int) -> bool:
+    """True when DELETE is allowed."""
+    return not unused_blockers(session, award_id)
+
+
+def serialize_clin(row: Clin) -> ClinOut:
+    """CLIN DTO."""
+    return ClinOut(
+        clin_id=row.clin_id,
+        clin_number=row.clin_number,
+        description=row.description,
+        amount_cents=row.amount_cents,
+        is_option=bool(row.is_option),
+        exercise_window_start=row.exercise_window_start,
+        exercise_window_end=row.exercise_window_end,
+        exercised_at=row.exercised_at,
+    )
+
+
+def add_clin(session: Session, award: Award, payload: ClinIn, *, actor_id: int | None) -> Clin:
+    """Insert a CLIN on an award."""
+    existing = session.scalar(
+        select(Clin).where(Clin.award_id == award.award_id, Clin.clin_number == payload.clin_number)
+    )
+    if existing is not None:
+        raise AwardError(f"clin {payload.clin_number} already exists on this award")
+    row = _add_clin(session, award.award_id, payload)
+    session.flush()
+    record_event(
+        session,
+        action="clin_create",
+        entity_type="clin",
+        entity_id=row.clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id, "clin_number": row.clin_number},
+    )
+    return row
+
+
+def update_clin(
+    session: Session, award: Award, clin: Clin, payload: ClinUpdate, *, actor_id: int | None
+) -> Clin:
+    """Patch CLIN facts. Does not set exercised_at."""
+    if clin.award_id != award.award_id:
+        raise AwardError("clin not found")
+    if payload.clin_number is not None:
+        taken = session.scalar(
+            select(Clin).where(
+                Clin.award_id == award.award_id,
+                Clin.clin_number == payload.clin_number,
+                Clin.clin_id != clin.clin_id,
+            )
+        )
+        if taken is not None:
+            raise AwardError(f"clin {payload.clin_number} already exists on this award")
+        clin.clin_number = payload.clin_number
+    if payload.description is not None:
+        clin.description = payload.description
+    if payload.amount_cents is not None:
+        clin.amount_cents = payload.amount_cents
+    if payload.is_option is not None:
+        clin.is_option = _as_int_flag(payload.is_option)
+    if payload.exercise_window_start is not None:
+        clin.exercise_window_start = payload.exercise_window_start or None
+    if payload.exercise_window_end is not None:
+        clin.exercise_window_end = payload.exercise_window_end or None
+    session.flush()
+    record_event(
+        session,
+        action="clin_update",
+        entity_type="clin",
+        entity_id=clin.clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id},
+    )
+    return clin
+
+
+def exercise_clin(
+    session: Session,
+    award: Award,
+    clin: Clin,
+    payload: ClinExerciseIn,
+    *,
+    actor_id: int | None,
+) -> Clin:
+    """Set exercised_at. Does not change funded remaining (D39)."""
+    if clin.award_id != award.award_id:
+        raise AwardError("clin not found")
+    if not clin.is_option:
+        raise AwardError("only option CLINs can be exercised")
+    if clin.exercised_at:
+        raise AwardError("clin is already exercised")
+    when = payload.exercised_at or datetime.now(UTC).date().isoformat()
+    try:
+        date.fromisoformat(when)
+    except ValueError as exc:
+        raise AwardError("exercised_at must be YYYY-MM-DD") from exc
+    clin.exercised_at = when
+    session.flush()
+    record_event(
+        session,
+        action="clin_exercise",
+        entity_type="clin",
+        entity_id=clin.clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id, "exercised_at": when},
+    )
+    return clin
+
+
+def delete_clin(session: Session, award: Award, clin: Clin, *, actor_id: int | None) -> None:
+    """Remove an unexercised CLIN."""
+    if clin.award_id != award.award_id:
+        raise AwardError("clin not found")
+    if clin.exercised_at:
+        raise AwardError("exercised CLINs cannot be deleted")
+    clin_id = clin.clin_id
+    session.delete(clin)
+    session.flush()
+    record_event(
+        session,
+        action="clin_delete",
+        entity_type="clin",
+        entity_id=clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id},
+    )
+
+
+def delete_award(session: Session, award: Award, *, actor_id: int | None) -> None:
+    """Remove an unused award and its child rows (D39)."""
+    blockers = unused_blockers(session, award.award_id)
+    if blockers:
+        raise AwardError(
+            "award has posted activity; set status to closed instead (" + ", ".join(blockers) + ")"
+        )
+    award_id = award.award_id
+    short_code = award.short_code
+    from ledger.config import get_settings
+    from ledger.services.documents import stored_path
+
+    for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
+        row.document_id = None
+    session.flush()
+    for doc in session.scalars(select(Document).where(Document.award_id == award_id)).all():
+        path = stored_path(doc)
+        if path is not None and path.is_file():
+            path.unlink()
+        session.delete(doc)
+    docs_dir = get_settings().runtime_dir() / "documents" / str(award_id)
+    if docs_dir.is_dir():
+        rmtree(docs_dir, ignore_errors=True)
+
+    for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(PipelineNode).where(PipelineNode.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(
+        select(FundingExpectation).where(FundingExpectation.award_id == award_id)
+    ):
+        session.delete(row)
+    for row in session.scalars(select(Assignment).where(Assignment.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(Task).where(Task.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(Clin).where(Clin.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(AwardMod).where(AwardMod.award_id == award_id)):
+        session.delete(row)
+
+    policies = list(
+        session.scalars(select(AwardRatePolicy).where(AwardRatePolicy.award_id == award_id))
+    )
+    for policy in policies:
+        for override in session.scalars(
+            select(AwardRateOverride).where(AwardRateOverride.policy_id == policy.policy_id)
+        ):
+            session.delete(override)
+        policy.labor_budget_line_id = None
+    session.flush()
+    for policy in policies:
+        session.delete(policy)
+    session.flush()
+
+    versions = list(
+        session.scalars(select(BudgetVersion).where(BudgetVersion.award_id == award_id))
+    )
+    for version in versions:
+        for line in session.scalars(
+            select(BudgetLine).where(BudgetLine.budget_version_id == version.budget_version_id)
+        ):
+            session.delete(line)
+        session.delete(version)
+    session.flush()
+    session.delete(award)
+    session.flush()
+    record_event(
+        session,
+        action="award_delete",
+        entity_type="award",
+        entity_id=award_id,
+        actor_user_id=actor_id,
+        detail={"short_code": short_code},
+    )
 
 
 def current_policy(session: Session, award_id: int) -> AwardRatePolicy | None:
@@ -515,7 +868,9 @@ def remaining_for(session: Session, award_id: int) -> AwardRemainingOut | None:
     row = session.execute(remaining_stmt(award_id)).mappings().first()
     if row is None:
         return None
-    return _remaining_out(row)
+    data = dict(row)
+    data["pipeline_cents"] = pipeline_cents_for(session, award_id)
+    return _remaining_out(data)
 
 
 def _remaining_out(row: object) -> AwardRemainingOut:
@@ -537,6 +892,7 @@ def _remaining_out(row: object) -> AwardRemainingOut:
         remaining_approved_cents=int(data["remaining_approved_cents"]),
         remaining_funded_cents=int(data["remaining_funded_cents"]),
         unexercised_option_cents=int(data["unexercised_option_cents"]),
+        pipeline_cents=int(data.get("pipeline_cents") or 0),
     )
 
 
@@ -593,6 +949,7 @@ def serialize_award(session: Session, award: Award) -> AwardOut:
         labor_incurred=bool(award.labor_incurred),
         fee_engine=award.fee_engine,
         ceiling_warn_pct=award.ceiling_warn_pct,
+        overrun_policy=award.overrun_policy,
         current_policy=serialize_policy(session, policy) if policy else None,
         budget_lines=[
             BudgetLineOut(
@@ -610,20 +967,10 @@ def serialize_award(session: Session, award: Award) -> AwardOut:
             )
             for line in lines
         ],
-        clins=[
-            ClinOut(
-                clin_id=row.clin_id,
-                clin_number=row.clin_number,
-                description=row.description,
-                amount_cents=row.amount_cents,
-                is_option=bool(row.is_option),
-                exercise_window_start=row.exercise_window_start,
-                exercise_window_end=row.exercise_window_end,
-                exercised_at=row.exercised_at,
-            )
-            for row in clins
-        ],
+        clins=[serialize_clin(row) for row in clins],
         remaining=remaining,
+        can_delete=can_delete_award(session, award.award_id),
+        type_locked=type_is_locked(session, award.award_id),
     )
 
 

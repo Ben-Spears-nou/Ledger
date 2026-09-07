@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from ledger.models import (
 )
 from ledger.schemas.commitments import (
     CommitmentOut,
+    CommitmentPatch,
     InstrumentIn,
     InstrumentOut,
     InstrumentShareOut,
@@ -66,6 +69,7 @@ def serialize_commitment(row: Commitment) -> CommitmentOut:
         person_id=row.person_id,
         effective_date=row.effective_date,
         trip_end=row.trip_end,
+        expected_date=row.expected_date,
         instrument_id=row.instrument_id,
         charge_id=row.charge_id,
     )
@@ -168,6 +172,7 @@ def _add_commitment(
     person_id: int | None,
     effective_date: str,
     trip_end: str | None,
+    expected_date: str | None,
     instrument_id: int | None,
     actor_id: int | None,
 ) -> Commitment:
@@ -186,6 +191,7 @@ def _add_commitment(
         person_id=person_id,
         effective_date=effective_date,
         trip_end=trip_end,
+        expected_date=expected_date,
         instrument_id=instrument_id,
         created_by=actor_id,
     )
@@ -216,6 +222,7 @@ def create_purchase(session: Session, payload: PurchaseIn, *, actor_id: int | No
         person_id=None,
         effective_date=payload.effective_date,
         trip_end=None,
+        expected_date=payload.expected_date,
         instrument_id=None,
         actor_id=actor_id,
     )
@@ -236,6 +243,7 @@ def create_travel(session: Session, payload: TravelIn, *, actor_id: int | None) 
         person_id=payload.person_id,
         effective_date=payload.effective_date,
         trip_end=payload.trip_end,
+        expected_date=payload.expected_date,
         instrument_id=None,
         actor_id=actor_id,
     )
@@ -292,6 +300,33 @@ def post_commitment(session: Session, row: Commitment, *, actor_id: int | None) 
     return row
 
 
+def patch_commitment(
+    session: Session, row: Commitment, payload: CommitmentPatch, *, actor_id: int | None
+) -> Commitment:
+    """Set expected invoice date. Does not change remaining."""
+    data = payload.model_dump(exclude_unset=True)
+    if "expected_date" in data:
+        value = data["expected_date"]
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise CommitmentError("expected_date must be YYYY-MM-DD") from exc
+        row.expected_date = value or None
+    if "description" in data:
+        row.description = data["description"]
+    session.flush()
+    record_event(
+        session,
+        action="commitment_update",
+        entity_type="commitment",
+        entity_id=row.commitment_id,
+        actor_user_id=actor_id,
+        detail={"award_id": row.award_id},
+    )
+    return row
+
+
 def cancel_commitment(session: Session, row: Commitment, *, actor_id: int | None) -> Commitment:
     """Drop an open commitment from remaining. Does not insert a charge."""
     if row.status_code != "open":
@@ -307,6 +342,27 @@ def cancel_commitment(session: Session, row: Commitment, *, actor_id: int | None
         detail={"award_id": row.award_id},
     )
     return row
+
+
+def delete_commitment(session: Session, row: Commitment, *, actor_id: int | None) -> None:
+    """Remove an unused purchase or travel row (D45). Posted history stays."""
+    if row.status_code == "posted":
+        raise CommitmentError("cannot delete a posted commitment")
+    if row.instrument_id is not None:
+        raise CommitmentError("cannot delete an instrument share; delete the instrument instead")
+    commitment_id = row.commitment_id
+    award_id = row.award_id
+    kind = row.kind
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="commitment_delete",
+        entity_type="commitment",
+        entity_id=commitment_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id, "kind": kind},
+    )
 
 
 def create_instrument(
@@ -365,6 +421,7 @@ def create_instrument(
             person_id=None,
             effective_date=payload.effective_from,
             trip_end=None,
+            expected_date=None,
             instrument_id=row.instrument_id,
             actor_id=actor_id,
         )
@@ -401,3 +458,35 @@ def post_instrument(session: Session, row: Instrument, *, actor_id: int | None) 
     row.status_code = "posted"
     session.flush()
     return row
+
+
+def delete_instrument(session: Session, row: Instrument, *, actor_id: int | None) -> None:
+    """Remove an unposted instrument and its open share commitments (D45)."""
+    children = list(
+        session.scalars(select(Commitment).where(Commitment.instrument_id == row.instrument_id))
+    )
+    if any(child.status_code == "posted" for child in children):
+        raise CommitmentError("cannot delete an instrument that has posted shares")
+    instrument_id = row.instrument_id
+    short = row.short_code
+    for child in children:
+        session.delete(child)
+    session.flush()
+    shares = list(
+        session.scalars(
+            select(InstrumentShare).where(InstrumentShare.instrument_id == instrument_id)
+        )
+    )
+    for share in shares:
+        session.delete(share)
+    session.flush()
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="instrument_delete",
+        entity_type="instrument",
+        entity_id=instrument_id,
+        actor_user_id=actor_id,
+        detail={"short_code": short},
+    )

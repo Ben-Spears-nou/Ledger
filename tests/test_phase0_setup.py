@@ -56,6 +56,21 @@ def test_settings_defaults(without_ledger_env: None) -> None:
     assert settings.log_level == "INFO"
 
 
+def test_loopback_and_lan_secret_guard() -> None:
+    from ledger.config import (
+        DEFAULT_SECRET_KEY,
+        is_loopback_host,
+        lan_bind_blocked_by_default_secret,
+    )
+
+    assert is_loopback_host("127.0.0.1")
+    assert is_loopback_host("localhost")
+    assert not is_loopback_host("0.0.0.0")
+    assert lan_bind_blocked_by_default_secret("0.0.0.0", DEFAULT_SECRET_KEY)
+    assert not lan_bind_blocked_by_default_secret("0.0.0.0", "not-the-default")
+    assert not lan_bind_blocked_by_default_secret("127.0.0.1", DEFAULT_SECRET_KEY)
+
+
 def test_settings_read_ledger_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LEDGER_API_PORT", "9001")
     monkeypatch.setenv("LEDGER_LOG_LEVEL", "DEBUG")
@@ -81,7 +96,16 @@ def test_health_endpoint() -> None:
 
 
 def test_task_names_match_the_build_plan() -> None:
-    assert set(TASKS) == {"install", "lint", "format", "test", "run", "db-init", "backup"}
+    assert set(TASKS) == {
+        "install",
+        "lint",
+        "format",
+        "test",
+        "build-ui",
+        "run",
+        "db-init",
+        "backup",
+    }
 
 
 def test_bootstrap_applies_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

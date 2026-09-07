@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ledger.schemas.operations import PlannedHoursOut
+
 
 class PersonRateIn(BaseModel):
     """New dated base rate. Salary + hours/year derives hourly cents."""
@@ -76,6 +78,7 @@ class WeekOut(BaseModel):
     return_comment: str | None
     hours_total: float
     lines: list[TimesheetLineOut]
+    planned: list[PlannedHoursOut] = Field(default_factory=list)
 
 
 class WeekAdminOut(BaseModel):
@@ -90,6 +93,7 @@ class WeekAdminOut(BaseModel):
     hours_total: float
     amount_cents: int
     lines: list[TimesheetLineAdminOut]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ReturnWeekIn(BaseModel):

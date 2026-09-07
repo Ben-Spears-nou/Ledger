@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db
 from ledger.models import UserAccount
+from ledger.models.documents import ComplianceKind, ComplianceStatus, DocumentKind
 from ledger.models.lookups import (
     Agency,
     AwardInstrument,
@@ -20,7 +21,9 @@ from ledger.models.lookups import (
     CostBasis,
     RatePolicyTemplate,
 )
+from ledger.models.pipeline import PipelineKind
 from ledger.models.time import TimeCode
+from ledger.services.audit import AUDIT_ACTIONS, AUDIT_ENTITY_TYPES
 
 router = APIRouter(prefix="/lookups", tags=["lookups"])
 
@@ -69,6 +72,7 @@ def all_lookups(
                 "labor_incurred": bool(row.labor_incurred),
                 "fee_engine": row.fee_engine,
                 "ceiling_warn_pct": row.ceiling_warn_pct,
+                "overrun_policy": row.overrun_policy,
             }
             for row in types
         ],
@@ -107,5 +111,26 @@ def all_lookups(
             for row in budget_templates
         ],
         "agencies": [row.agency_name for row in agencies],
+        "document_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(DocumentKind).order_by(DocumentKind.kind_code))
+        ],
+        "compliance_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(ComplianceKind).order_by(ComplianceKind.kind_code))
+        ],
+        "compliance_statuses": [
+            {"status_code": row.status_code, "description": row.description}
+            for row in session.scalars(
+                select(ComplianceStatus).order_by(ComplianceStatus.status_code)
+            )
+        ],
+        "pipeline_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(PipelineKind).order_by(PipelineKind.kind_code))
+        ],
+        "overrun_policies": ["stop", "warn", "allow"],
+        "audit_actions": list(AUDIT_ACTIONS),
+        "audit_entity_types": list(AUDIT_ENTITY_TYPES),
         "time_codes": _time_codes(session),
     }
