@@ -82,6 +82,7 @@ class AwardUpdate(BaseModel):
     type_code: str | None = None
     status_code: str | None = None
     funded_through: str | None = None
+    overrun_policy: str | None = None
 
 
 class ClinUpdate(BaseModel):
@@ -233,6 +234,7 @@ class AwardOut(BaseModel):
     labor_incurred: bool
     fee_engine: str
     ceiling_warn_pct: int
+    overrun_policy: str = "warn"
     current_policy: RatePolicyOut | None = None
     budget_lines: list[BudgetLineOut] = Field(default_factory=list)
     clins: list[ClinOut] = Field(default_factory=list)

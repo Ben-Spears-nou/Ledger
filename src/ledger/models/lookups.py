@@ -65,6 +65,7 @@ class AwardType(Base):
     labor_incurred: Mapped[int] = mapped_column(Integer, nullable=False)
     fee_engine: Mapped[str] = mapped_column(Text, nullable=False)
     ceiling_warn_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    overrun_policy: Mapped[str] = mapped_column(Text, nullable=False, default="warn")
 
 
 class AwardStatus(Base):

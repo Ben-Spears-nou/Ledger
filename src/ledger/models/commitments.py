@@ -63,6 +63,7 @@ class Commitment(Base):
     person_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("person.person_id"))
     effective_date: Mapped[str] = mapped_column(Text, nullable=False)
     trip_end: Mapped[str | None] = mapped_column(Text)
+    expected_date: Mapped[str | None] = mapped_column(Text)
     instrument_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("instrument.instrument_id")
     )

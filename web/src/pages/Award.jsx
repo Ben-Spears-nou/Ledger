@@ -27,6 +27,7 @@ function headerFromAward(detail) {
     type_code: detail.type_code || "",
     status_code: detail.status_code || "active",
     funded_through: detail.funded_through || "",
+    overrun_policy: detail.overrun_policy || "warn",
   };
 }
 
@@ -172,6 +173,7 @@ export default function Award() {
     description: "",
     vendor: "",
     effective_date: todayIso(),
+    expected_date: "",
   });
   const [travelForm, setTravelForm] = useState({
     dollars: "",
@@ -179,6 +181,7 @@ export default function Award() {
     person_id: "",
     effective_date: todayIso(),
     trip_end: "",
+    expected_date: "",
   });
   const [statuses, setStatuses] = useState([]);
   const [agencies, setAgencies] = useState([]);
@@ -190,6 +193,8 @@ export default function Award() {
   const [costBases, setCostBases] = useState([]);
   const [deleteCode, setDeleteCode] = useState("");
   const [clinForm, setClinForm] = useState(emptyClinForm);
+  const [funding, setFunding] = useState([]);
+  const [fundForm, setFundForm] = useState({ expected_date: todayIso(), dollars: "", notes: "" });
   const [headerForm, setHeaderForm] = useState({
     short_code: "",
     title: "",
@@ -200,6 +205,7 @@ export default function Award() {
     type_code: "",
     status_code: "active",
     funded_through: "",
+    overrun_policy: "warn",
   });
   const [policyForm, setPolicyForm] = useState({
     template_code: "",
@@ -225,18 +231,21 @@ export default function Award() {
   });
 
   async function load() {
-    const [detail, taskList, assignList, personList, commitmentList, lookups] = await Promise.all([
-      api(`/awards/${id}`),
-      api(`/awards/${id}/tasks`),
-      api("/assignments", { query: { award_id: id } }),
-      api("/people"),
-      api(`/awards/${id}/commitments`),
-      api("/lookups"),
-    ]);
+    const [detail, taskList, assignList, personList, commitmentList, lookups, fundingList] =
+      await Promise.all([
+        api(`/awards/${id}`),
+        api(`/awards/${id}/tasks`),
+        api("/assignments", { query: { award_id: id } }),
+        api("/people"),
+        api(`/awards/${id}/commitments`),
+        api("/lookups"),
+        api(`/awards/${id}/funding-expectations`),
+      ]);
     setAward(detail);
     setHeaderForm(headerFromAward(detail));
     setPolicyForm(policyFromAward(detail));
     setModForm(modFromAward(detail));
+    setFunding(fundingList || []);
     setTasks(taskList);
     setAssignments(assignList);
     setPeople(personList);
@@ -307,6 +316,7 @@ export default function Award() {
           type_code: headerForm.type_code,
           status_code: headerForm.status_code,
           funded_through: headerForm.funded_through || null,
+          overrun_policy: headerForm.overrun_policy,
         },
       });
       setNotice("Award header saved.");
@@ -389,8 +399,9 @@ export default function Award() {
     setNotice("");
     try {
       await api(`/awards/${id}/clins/${clin.clin_id}/exercise`, { method: "POST", body: {} });
-      setNotice("CLIN exercised. Record a mod if funded remaining should change.");
+      setNotice("CLIN exercised. Record a modification below if funded remaining should change.");
       await load();
+      document.getElementById("award-mod")?.scrollIntoView({ behavior: "smooth" });
     } catch (err) {
       setError(err.message);
     }
@@ -548,10 +559,69 @@ export default function Award() {
           description: purchaseForm.description || null,
           vendor: purchaseForm.vendor || null,
           effective_date: purchaseForm.effective_date,
+          expected_date: purchaseForm.expected_date || null,
         },
       });
       setPurchaseForm((current) => ({ ...current, dollars: "", description: "", vendor: "" }));
       setNotice("Purchase committed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function addFunding(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/funding-expectations`, {
+        method: "POST",
+        body: {
+          expected_date: fundForm.expected_date,
+          amount_cents: parseDollarsToCents(fundForm.dollars) ?? 0,
+          notes: fundForm.notes || null,
+        },
+      });
+      setFundForm({ expected_date: todayIso(), dollars: "", notes: "" });
+      setNotice("Expected increment saved. It is not remaining until you record a mod.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeFunding(expectationId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/funding-expectations/${expectationId}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function saveExpectedDate(commitmentId, expectedDate) {
+    setError("");
+    try {
+      await api(`/commitments/${commitmentId}`, {
+        method: "PATCH",
+        body: { expected_date: expectedDate || null },
+      });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function linkComplianceDocument(itemId, documentId) {
+    setError("");
+    try {
+      await api(`/compliance/${itemId}`, {
+        method: "PATCH",
+        body: { document_id: documentId ? Number(documentId) : null },
+      });
       await load();
     } catch (err) {
       setError(err.message);
@@ -574,6 +644,9 @@ export default function Award() {
       }
       if (travelForm.trip_end) {
         body.trip_end = travelForm.trip_end;
+      }
+      if (travelForm.expected_date) {
+        body.expected_date = travelForm.expected_date;
       }
       await api("/travel", { method: "POST", body });
       setTravelForm((current) => ({ ...current, dollars: "", description: "", trip_end: "" }));
@@ -897,9 +970,15 @@ export default function Award() {
               <select
                 value={headerForm.type_code}
                 disabled={Boolean(award.type_locked)}
-                onChange={(event) =>
-                  setHeaderForm((current) => ({ ...current, type_code: event.target.value }))
-                }
+                onChange={(event) => {
+                  const type_code = event.target.value;
+                  const typeRow = awardTypes.find((row) => row.type_code === type_code);
+                  setHeaderForm((current) => ({
+                    ...current,
+                    type_code,
+                    overrun_policy: typeRow?.overrun_policy || current.overrun_policy,
+                  }));
+                }}
               >
                 {awardTypes.map((row) => (
                   <option key={row.type_code} value={row.type_code}>
@@ -910,6 +989,19 @@ export default function Award() {
               {award.type_locked ? (
                 <p className="muted">Type is locked after charges or commitments.</p>
               ) : null}
+            </div>
+            <div>
+              <label>Overrun</label>
+              <select
+                value={headerForm.overrun_policy}
+                onChange={(event) =>
+                  setHeaderForm((current) => ({ ...current, overrun_policy: event.target.value }))
+                }
+              >
+                <option value="stop">stop</option>
+                <option value="warn">warn</option>
+                <option value="allow">allow</option>
+              </select>
             </div>
           </div>
           <p>
@@ -1028,6 +1120,82 @@ export default function Award() {
           </div>
           <p>
             <button type="submit">Add CLIN</button>
+          </p>
+        </form>
+      </div>
+      <div className="card">
+        <h2>Expected funding</h2>
+        <p className="muted">
+          Increments you expect. They are not remaining and not pipeline until you record a
+          modification.
+        </p>
+        {funding.length ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Amount</th>
+                <th>Notes</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {funding.map((row) => (
+                <tr key={row.funding_expectation_id}>
+                  <td>{row.expected_date}</td>
+                  <td>{formatCents(row.amount_cents)}</td>
+                  <td>{row.notes || "—"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => removeFunding(row.funding_expectation_id)}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="muted">No expected increments.</p>
+        )}
+        <form onSubmit={addFunding}>
+          <div className="row">
+            <div>
+              <label>Expected date</label>
+              <input
+                type="date"
+                required
+                value={fundForm.expected_date}
+                onChange={(event) =>
+                  setFundForm((current) => ({ ...current, expected_date: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Amount ($)</label>
+              <input
+                required
+                value={fundForm.dollars}
+                onChange={(event) =>
+                  setFundForm((current) => ({ ...current, dollars: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Notes</label>
+              <input
+                value={fundForm.notes}
+                onChange={(event) =>
+                  setFundForm((current) => ({ ...current, notes: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <p>
+            <button type="submit">Add expected increment</button>
           </p>
         </form>
       </div>
@@ -1159,7 +1327,7 @@ export default function Award() {
           </p>
         </form>
       </div>
-      <div className="card">
+      <div className="card" id="award-mod">
         <h2>Record a modification</h2>
         <p className="muted">
           New funded amount, PoP, or budget line totals. Prefill is the current award.
@@ -1657,6 +1825,16 @@ export default function Award() {
                 }
               />
             </div>
+            <div>
+              <label>Expected invoice</label>
+              <input
+                type="date"
+                value={purchaseForm.expected_date}
+                onChange={(event) =>
+                  setPurchaseForm((current) => ({ ...current, expected_date: event.target.value }))
+                }
+              />
+            </div>
           </div>
           <label>Description</label>
           <input
@@ -1723,6 +1901,16 @@ export default function Award() {
                 }
               />
             </div>
+            <div>
+              <label>Expected invoice</label>
+              <input
+                type="date"
+                value={travelForm.expected_date}
+                onChange={(event) =>
+                  setTravelForm((current) => ({ ...current, expected_date: event.target.value }))
+                }
+              />
+            </div>
           </div>
           <label>Description</label>
           <input
@@ -1746,6 +1934,7 @@ export default function Award() {
               <th>Status</th>
               <th>Category</th>
               <th>Amount</th>
+              <th>Expected</th>
               <th>Description</th>
               <th></th>
             </tr>
@@ -1759,6 +1948,22 @@ export default function Award() {
                 </td>
                 <td>{row.category_code}</td>
                 <td>{formatCents(row.amount_cents)}</td>
+                <td>
+                  {row.status_code === "open" ? (
+                    <input
+                      type="date"
+                      defaultValue={row.expected_date || ""}
+                      onBlur={(event) => {
+                        const next = event.target.value || "";
+                        if (next !== (row.expected_date || "")) {
+                          saveExpectedDate(row.commitment_id, next);
+                        }
+                      }}
+                    />
+                  ) : (
+                    row.expected_date || "—"
+                  )}
+                </td>
                 <td>{row.description || row.vendor || "—"}</td>
                 <td>
                   {row.status_code === "open" ? (
@@ -1928,6 +2133,7 @@ export default function Award() {
               <th>Due</th>
               <th>Kind</th>
               <th>Title</th>
+              <th>Document</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -1938,6 +2144,21 @@ export default function Award() {
                 <td>{row.due_date}</td>
                 <td>{row.kind_code}</td>
                 <td>{row.title}</td>
+                <td>
+                  <select
+                    value={row.document_id || ""}
+                    onChange={(event) =>
+                      linkComplianceDocument(row.compliance_item_id, event.target.value)
+                    }
+                  >
+                    <option value="">None</option>
+                    {documents.map((doc) => (
+                      <option key={doc.document_id} value={doc.document_id}>
+                        {doc.title}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td>
                   <span className="status">{row.status_code}</span>
                 </td>

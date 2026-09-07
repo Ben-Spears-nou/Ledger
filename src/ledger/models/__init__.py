@@ -1,7 +1,14 @@
 """SQLAlchemy 2.x models mirroring every table in ``db/schema.sql``."""
 
 from ledger.models.audit import AuditEvent
-from ledger.models.awards import Award, AwardMod, AwardRateOverride, AwardRatePolicy, Clin
+from ledger.models.awards import (
+    Award,
+    AwardMod,
+    AwardRateOverride,
+    AwardRatePolicy,
+    Clin,
+    FundingExpectation,
+)
 from ledger.models.base import Base
 from ledger.models.budgets import BudgetLine, BudgetVersion
 from ledger.models.commitments import Commitment, Instrument, InstrumentShare
@@ -58,6 +65,7 @@ __all__ = [
     "CostBasis",
     "Document",
     "DocumentKind",
+    "FundingExpectation",
     "Instrument",
     "InstrumentShare",
     "Organization",

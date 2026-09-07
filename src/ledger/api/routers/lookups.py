@@ -72,6 +72,7 @@ def all_lookups(
                 "labor_incurred": bool(row.labor_incurred),
                 "fee_engine": row.fee_engine,
                 "ceiling_warn_pct": row.ceiling_warn_pct,
+                "overrun_policy": row.overrun_policy,
             }
             for row in types
         ],
@@ -128,6 +129,7 @@ def all_lookups(
             {"kind_code": row.kind_code, "description": row.description}
             for row in session.scalars(select(PipelineKind).order_by(PipelineKind.kind_code))
         ],
+        "overrun_policies": ["stop", "warn", "allow"],
         "audit_actions": list(AUDIT_ACTIONS),
         "audit_entity_types": list(AUDIT_ENTITY_TYPES),
         "time_codes": _time_codes(session),

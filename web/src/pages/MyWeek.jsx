@@ -70,6 +70,7 @@ export default function MyWeek() {
   const [awards, setAwards] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [timeCodes, setTimeCodes] = useState([]);
+  const [planned, setPlanned] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const locked = status === "submitted" || status === "approved";
@@ -114,6 +115,7 @@ export default function MyWeek() {
     setAwards(openAwards);
     setTasks(taskList || []);
     setTimeCodes(lookups.time_codes || []);
+    setPlanned(week.planned || []);
     setRows(rowsFromLines(week.lines, week.week_start));
   }
 
@@ -203,6 +205,7 @@ export default function MyWeek() {
       });
       setStatus(week.status_code);
       setRows(rowsFromLines(week.lines, week.week_start));
+      setPlanned(week.planned || []);
       setNotice("Submitted.");
     } catch (err) {
       setError(err.message);
@@ -240,6 +243,33 @@ export default function MyWeek() {
             <div>{hoursTotal}</div>
           </div>
         </div>
+        {planned.length ? (
+          <div>
+            <p className="muted">Planned this week (hours only):</p>
+            <ul>
+              {planned.map((row) => {
+                const award = awards.find((item) => item.award_id === row.award_id);
+                const logged = rows
+                  .filter(
+                    (item) =>
+                      Number(item.award_id) === row.award_id &&
+                      (row.task_id ? Number(item.task_id) === row.task_id : !item.task_id),
+                  )
+                  .reduce(
+                    (sum, item) =>
+                      sum + item.hours.reduce((rowSum, hours) => rowSum + (Number(hours) || 0), 0),
+                    0,
+                  );
+                return (
+                  <li key={`${row.award_id}-${row.task_id || "a"}`}>
+                    {award ? award.short_code : `award ${row.award_id}`}: planned {row.hours_per_week}
+                    h, logged {roundHours(logged)}h
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
         {returnComment ? <p>Returned: {returnComment}</p> : null}
       </div>
 

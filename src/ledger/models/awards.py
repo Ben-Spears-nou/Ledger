@@ -43,6 +43,7 @@ class Award(Base):
     labor_incurred: Mapped[int] = mapped_column(Integer, nullable=False)
     fee_engine: Mapped[str] = mapped_column(Text, nullable=False)
     ceiling_warn_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    overrun_policy: Mapped[str] = mapped_column(Text, nullable=False, default="warn")
     created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())
     created_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("user_account.user_account_id")
@@ -126,3 +127,19 @@ class AwardRateOverride(Base):
     person_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("person.person_id"))
     labor_category: Mapped[str | None] = mapped_column(Text)
     loaded_rate_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class FundingExpectation(Base):
+    """Expected increment. Not remaining (D42)."""
+
+    __tablename__ = "funding_expectation"
+
+    funding_expectation_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    award_id: Mapped[int] = mapped_column(Integer, ForeignKey("award.award_id"), nullable=False)
+    expected_date: Mapped[str] = mapped_column(Text, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())
+    created_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_account.user_account_id")
+    )

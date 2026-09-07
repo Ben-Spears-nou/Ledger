@@ -44,6 +44,7 @@ class CompliancePatch(BaseModel):
 
     status_code: str | None = None
     notes: str | None = Field(default=None)
+    document_id: int | None = None
 
 
 class ComplianceOut(BaseModel):
@@ -58,4 +59,5 @@ class ComplianceOut(BaseModel):
     status_code: str
     notes: str | None
     completed_at: str | None
+    document_id: int | None = None
     created_at: str

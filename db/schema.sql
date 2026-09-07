@@ -1,4 +1,4 @@
--- Ledger Phase 1–6 schema. SQLite 3.31+.
+-- Ledger Phase 1–10 schema. SQLite 3.31+.
 -- Money is integer cents. Percents are integer hundredths of a percent
 -- (3215 = 32.15%; multiplier is 1 + pct/10000). See docs/SCHEMA_NOTES.md.
 -- db/schema.sql is the source of truth. Do not invent tables here.
@@ -60,16 +60,19 @@ CREATE TABLE IF NOT EXISTS award_type (
     labor_incurred      INTEGER NOT NULL CHECK (labor_incurred IN (0, 1)),
     fee_engine          TEXT NOT NULL CHECK (fee_engine IN ('fixed_pot', 'none')),
     ceiling_warn_pct    INTEGER NOT NULL DEFAULT 75
-        CHECK (ceiling_warn_pct BETWEEN 0 AND 100)
+        CHECK (ceiling_warn_pct BETWEEN 0 AND 100),
+    overrun_policy      TEXT NOT NULL DEFAULT 'warn'
+        CHECK (overrun_policy IN ('stop', 'warn', 'allow'))
 );
 INSERT INTO award_type (
-    type_code, description, enforce_ceiling, labor_incurred, fee_engine, ceiling_warn_pct
+    type_code, description, enforce_ceiling, labor_incurred, fee_engine, ceiling_warn_pct,
+    overrun_policy
 ) VALUES
-    ('CPFF',     'Cost Plus Fixed Fee',          1, 1, 'fixed_pot', 75),
-    ('FFP',      'Firm Fixed Price',             0, 1, 'none',      75),
-    ('TM',       'Time and Materials',           1, 1, 'none',      75),
-    ('grant',    'Cost-reimbursable grant',      1, 1, 'fixed_pot', 75),
-    ('internal', 'Internal / IR&D / B&P',        0, 1, 'none',      75);
+    ('CPFF',     'Cost Plus Fixed Fee',          1, 1, 'fixed_pot', 75, 'stop'),
+    ('FFP',      'Firm Fixed Price',             0, 1, 'none',      75, 'warn'),
+    ('TM',       'Time and Materials',           1, 1, 'none',      75, 'stop'),
+    ('grant',    'Cost-reimbursable grant',      1, 1, 'fixed_pot', 75, 'stop'),
+    ('internal', 'Internal / IR&D / B&P',        0, 1, 'none',      75, 'allow');
 
 CREATE TABLE IF NOT EXISTS award_status (
     status_code  TEXT PRIMARY KEY,
@@ -271,6 +274,8 @@ CREATE TABLE IF NOT EXISTS award (
     fee_engine            TEXT NOT NULL CHECK (fee_engine IN ('fixed_pot', 'none')),
     ceiling_warn_pct      INTEGER NOT NULL DEFAULT 75
         CHECK (ceiling_warn_pct BETWEEN 0 AND 100),
+    overrun_policy        TEXT NOT NULL DEFAULT 'warn'
+        CHECK (overrun_policy IN ('stop', 'warn', 'allow')),
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     created_by            INTEGER REFERENCES user_account (user_account_id),
     UNIQUE (organization_id, short_code),
@@ -551,6 +556,7 @@ CREATE TABLE IF NOT EXISTS commitment (
     person_id         INTEGER REFERENCES person (person_id),
     effective_date    TEXT NOT NULL,
     trip_end          TEXT,
+    expected_date     TEXT,
     instrument_id     INTEGER REFERENCES instrument (instrument_id),
     charge_id         INTEGER REFERENCES charge (charge_id),
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
@@ -716,6 +722,7 @@ CREATE TABLE IF NOT EXISTS compliance_item (
     status_code         TEXT NOT NULL REFERENCES compliance_status (status_code),
     notes               TEXT,
     completed_at        TEXT,
+    document_id         INTEGER REFERENCES document (document_id),
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     created_by          INTEGER REFERENCES user_account (user_account_id)
 );
@@ -726,6 +733,23 @@ CREATE INDEX IF NOT EXISTS ix_compliance_award_due
     ON compliance_item (award_id, due_date);
 CREATE INDEX IF NOT EXISTS ix_compliance_due
     ON compliance_item (due_date);
+
+-- =====================================================================
+-- Funding expectations (Phase 10). Not remaining (D42).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS funding_expectation (
+    funding_expectation_id  INTEGER PRIMARY KEY,
+    award_id                INTEGER NOT NULL REFERENCES award (award_id),
+    expected_date           TEXT NOT NULL,
+    amount_cents            INTEGER NOT NULL CHECK (amount_cents >= 0),
+    notes                   TEXT,
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by              INTEGER REFERENCES user_account (user_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_funding_expectation_award
+    ON funding_expectation (award_id, expected_date);
 
 -- =====================================================================
 -- Pipeline forecast (Phase 6). Not remaining (D32).

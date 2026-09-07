@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +20,7 @@ from ledger.models import (
 )
 from ledger.schemas.commitments import (
     CommitmentOut,
+    CommitmentPatch,
     InstrumentIn,
     InstrumentOut,
     InstrumentShareOut,
@@ -66,6 +69,7 @@ def serialize_commitment(row: Commitment) -> CommitmentOut:
         person_id=row.person_id,
         effective_date=row.effective_date,
         trip_end=row.trip_end,
+        expected_date=row.expected_date,
         instrument_id=row.instrument_id,
         charge_id=row.charge_id,
     )
@@ -168,6 +172,7 @@ def _add_commitment(
     person_id: int | None,
     effective_date: str,
     trip_end: str | None,
+    expected_date: str | None,
     instrument_id: int | None,
     actor_id: int | None,
 ) -> Commitment:
@@ -186,6 +191,7 @@ def _add_commitment(
         person_id=person_id,
         effective_date=effective_date,
         trip_end=trip_end,
+        expected_date=expected_date,
         instrument_id=instrument_id,
         created_by=actor_id,
     )
@@ -216,6 +222,7 @@ def create_purchase(session: Session, payload: PurchaseIn, *, actor_id: int | No
         person_id=None,
         effective_date=payload.effective_date,
         trip_end=None,
+        expected_date=payload.expected_date,
         instrument_id=None,
         actor_id=actor_id,
     )
@@ -236,6 +243,7 @@ def create_travel(session: Session, payload: TravelIn, *, actor_id: int | None) 
         person_id=payload.person_id,
         effective_date=payload.effective_date,
         trip_end=payload.trip_end,
+        expected_date=payload.expected_date,
         instrument_id=None,
         actor_id=actor_id,
     )
@@ -288,6 +296,33 @@ def post_commitment(session: Session, row: Commitment, *, actor_id: int | None) 
         entity_id=row.commitment_id,
         actor_user_id=actor_id,
         detail={"charge_id": charge.charge_id, "amount_cents": row.amount_cents},
+    )
+    return row
+
+
+def patch_commitment(
+    session: Session, row: Commitment, payload: CommitmentPatch, *, actor_id: int | None
+) -> Commitment:
+    """Set expected invoice date. Does not change remaining."""
+    data = payload.model_dump(exclude_unset=True)
+    if "expected_date" in data:
+        value = data["expected_date"]
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise CommitmentError("expected_date must be YYYY-MM-DD") from exc
+        row.expected_date = value or None
+    if "description" in data:
+        row.description = data["description"]
+    session.flush()
+    record_event(
+        session,
+        action="commitment_update",
+        entity_type="commitment",
+        entity_id=row.commitment_id,
+        actor_user_id=actor_id,
+        detail={"award_id": row.award_id},
     )
     return row
 
@@ -365,6 +400,7 @@ def create_instrument(
             person_id=None,
             effective_date=payload.effective_from,
             trip_end=None,
+            expected_date=None,
             instrument_id=row.instrument_id,
             actor_id=actor_id,
         )

@@ -25,6 +25,7 @@ from ledger.models import (
     Commitment,
     ComplianceItem,
     Document,
+    FundingExpectation,
     InstrumentShare,
     PipelineNode,
     RatePolicyTemplate,
@@ -193,6 +194,7 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
         labor_incurred=award_type.labor_incurred,
         fee_engine=award_type.fee_engine,
         ceiling_warn_pct=award_type.ceiling_warn_pct,
+        overrun_policy=award_type.overrun_policy,
         created_by=actor_id,
     )
     session.add(award)
@@ -478,10 +480,15 @@ def update_award(
         award.labor_incurred = award_type.labor_incurred
         award.fee_engine = award_type.fee_engine
         award.ceiling_warn_pct = award_type.ceiling_warn_pct
+        award.overrun_policy = award_type.overrun_policy
     if payload.status_code is not None:
         award.status_code = payload.status_code
     if payload.funded_through is not None:
         award.funded_through = payload.funded_through
+    if payload.overrun_policy is not None:
+        if payload.overrun_policy not in {"stop", "warn", "allow"}:
+            raise AwardError("overrun_policy must be stop, warn, or allow")
+        award.overrun_policy = payload.overrun_policy
     session.flush()
     record_event(
         session,
@@ -674,6 +681,9 @@ def delete_award(session: Session, award: Award, *, actor_id: int | None) -> Non
     from ledger.config import get_settings
     from ledger.services.documents import stored_path
 
+    for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
+        row.document_id = None
+    session.flush()
     for doc in session.scalars(select(Document).where(Document.award_id == award_id)).all():
         path = stored_path(doc)
         if path is not None and path.is_file():
@@ -686,6 +696,10 @@ def delete_award(session: Session, award: Award, *, actor_id: int | None) -> Non
     for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
         session.delete(row)
     for row in session.scalars(select(PipelineNode).where(PipelineNode.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(
+        select(FundingExpectation).where(FundingExpectation.award_id == award_id)
+    ):
         session.delete(row)
     for row in session.scalars(select(Assignment).where(Assignment.award_id == award_id)):
         session.delete(row)
@@ -896,6 +910,7 @@ def serialize_award(session: Session, award: Award) -> AwardOut:
         labor_incurred=bool(award.labor_incurred),
         fee_engine=award.fee_engine,
         ceiling_warn_pct=award.ceiling_warn_pct,
+        overrun_policy=award.overrun_policy,
         current_policy=serialize_policy(session, policy) if policy else None,
         budget_lines=[
             BudgetLineOut(

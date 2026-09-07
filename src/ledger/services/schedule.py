@@ -386,6 +386,11 @@ def _as_of_capacity(session: Session, person_id: int, as_of: str) -> PersonCapac
     )
 
 
+def as_of_capacity(session: Session, person_id: int, as_of: str) -> PersonCapacity | None:
+    """Capacity row in effect on ``as_of``."""
+    return _as_of_capacity(session, person_id, as_of)
+
+
 def capacity_for_week(session: Session, week_start: str) -> list[CapacityWeekRow]:
     """Planned vs capacity hours for every person with a login."""
     monday = week_start_on_or_before(week_start)

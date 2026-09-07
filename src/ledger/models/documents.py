@@ -75,6 +75,7 @@ class ComplianceItem(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[str | None] = mapped_column(Text)
+    document_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("document.document_id"))
     created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())
     created_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("user_account.user_account_id")

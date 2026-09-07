@@ -184,7 +184,16 @@ ol.steps .current {
   font-weight: 650;
 }
 
-label input[type="checkbox"] {
-  width: auto;
-  margin-right: 0.35rem;
+header.app .header-search {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+header.app .header-search input {
+  width: 10rem;
+}
+
+.search-hits {
+  margin: 0.75rem 1.25rem 0;
 }

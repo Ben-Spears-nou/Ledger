@@ -72,6 +72,7 @@ def serialize_compliance(row: ComplianceItem, award: Award | None = None) -> Com
         status_code=row.status_code,
         notes=row.notes,
         completed_at=row.completed_at,
+        document_id=row.document_id,
         created_at=row.created_at,
     )
 
@@ -265,6 +266,15 @@ def patch_compliance(
             row.completed_at = datetime.now(UTC).replace(microsecond=0).isoformat()
         else:
             row.completed_at = None
+    if "document_id" in data:
+        document_id = data["document_id"]
+        if document_id is None:
+            row.document_id = None
+        else:
+            document = session.get(Document, document_id)
+            if document is None or document.award_id != row.award_id:
+                raise DocumentError("document not found on this award")
+            row.document_id = document_id
     session.flush()
     record_event(
         session,

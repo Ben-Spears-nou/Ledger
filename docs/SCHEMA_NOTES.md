@@ -20,7 +20,7 @@ Dates are ISO `YYYY-MM-DD`. Timestamps are SQLite `datetime('now')` text.
 | `award_instrument` | `instrument_code` | `contract`, `grant`, `internal` |
 | `award_mechanism` | `mechanism_code` | `SBIR`, `STTR`, `other` |
 | `award_phase` | `phase_code` | `I`, `II`, `IIB`, `III`, `n/a` |
-| `award_type` | `type_code` | Rules profile: `enforce_ceiling`, `labor_incurred`, `fee_engine`, `ceiling_warn_pct` |
+| `award_type` | `type_code` | Rules profile: `enforce_ceiling`, `labor_incurred`, `fee_engine`, `ceiling_warn_pct`, `overrun_policy` (`stop`/`warn`/`allow`) |
 | `award_status` | `status_code` | `pipeline`, `active`, `closed` |
 | `cost_basis` | `cost_basis_code` | `base`, `wrapped`, `fully_burdened`, `catalog` |
 | `budget_category` | `category_code` | Editable seed; not hard-coded in app logic except personnel/fee helpers |
@@ -50,7 +50,7 @@ never `awarded_cost × fee_pct`.
 
 | Table | Notes |
 |---|---|
-| `award` | Intake fields plus a **stamped** copy of the type's rules profile. Type restamp only while unused (D39). Unused awards may be deleted; used awards close. |
+| `award` | Intake fields plus a **stamped** copy of the type's rules profile (`enforce_ceiling`, `labor_incurred`, `fee_engine`, `ceiling_warn_pct`, `overrun_policy`). Type restamp only while unused (D39). Unused awards may be deleted; used awards close. |
 | `award_mod` | History of money/PoP changes. New row per mod; award current fields update |
 | `clin` | Optional CLINs. `is_option=1` and `exercised_at IS NULL` is pipeline money (D17). Phase 9 can add/patch/exercise; delete only while unexercised. |
 | `budget_version` | One `is_active=1` per award (partial unique index) |
@@ -98,7 +98,7 @@ does not hide earlier labor.
 |---|---|
 | `audit_event` | Append-only (D19). `who` (`actor_user_id`, nullable), `when` (`occurred_at`), `action`, `entity_type`, `entity_id` (text), optional JSON `detail`. Never update or delete rows. Phase 7 is the UI and charges CSV (D35, D36). Phase 8 adds lookup lists for action/entity filters (D37). |
 
-Written for: login failure (never the password), password change, password reset, person create / update, person rate create, award create / update / delete, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel, instrument create, document create / file, compliance create / status, pipeline create / update / delete, clin create / update / exercise / delete.
+Written for: login failure (never the password), password change, password reset, person create / update, person rate create, award create / update / delete, policy revision, week submit / approve / return, task create, assignment create, capacity create, commitment create / post / cancel / update, instrument create, document create / file, compliance create / status, pipeline create / update / delete, clin create / update / exercise / delete, funding expectation create / delete.
 
 ---
 
@@ -106,7 +106,7 @@ Written for: login failure (never the password), password change, password reset
 
 | Table | Notes |
 |---|---|
-| `commitment` | Open / posted / cancelled. Kind `purchase`, `travel`, or `instrument`. Open cents are remaining committed (D25) |
+| `commitment` | Open / posted / cancelled. Kind `purchase`, `travel`, or `instrument`. Open cents are remaining committed (D25). Optional `expected_date` is aging only, not remaining (D42) |
 | `instrument` | Shared cost header. Dated. Status follows its commitments |
 | `instrument_share` | `share_pct` hundredths of a percent; must sum to 10000 per instrument (D26, D27) |
 
@@ -138,7 +138,7 @@ set. Non-award time codes cannot carry a task.
 | `document` | Award register row. Optional file on local disk (D29), not a BLOB |
 | `compliance_kind` | Lookup: technical_report, financial_report, pop_end, irb, iacuc, property, invoice, other |
 | `compliance_status` | `open`, `done`, `waived` |
-| `compliance_item` | Due date on an award. Not remaining money (D30) |
+| `compliance_item` | Due date on an award. Not remaining money (D30). Optional `document_id` on the same award (D42) |
 
 Files: `{data_dir}/documents/{award_id}/{document_id}{ext}`. Max 20 MiB.
 Admin-only. Remaining views unchanged.
@@ -154,3 +154,17 @@ Admin-only. Remaining views unchanged.
 | `v_award_burn_monthly` | `SUM(charge.amount_cents)` by award and `YYYY-MM` of `work_date` |
 
 EAC and runway are computed (D33). Alerts are computed on read (D34): no alert table, no email.
+
+---
+
+## Operations (Phase 10)
+
+| Table / column | Notes |
+|---|---|
+| `award.overrun_policy` | Stamped `stop` / `warn` / `allow` (D43). Hard 409 still uses `enforce_ceiling` on funded remaining |
+| `award_type.overrun_policy` | Default profile copied onto the award at create / type restamp |
+| `commitment.expected_date` | Expected invoice. Aging uses this or `effective_date`; not remaining |
+| `compliance_item.document_id` | Optional link to a document on the same award; does not mark done |
+| `funding_expectation` | Expected increment. Not remaining, not pipeline, not a CLIN (D42) |
+
+Home, staffing, search, and close are computed. No extra remaining columns.

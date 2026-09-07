@@ -20,10 +20,12 @@ from ledger.schemas.time import (
     WeekOut,
     WeekPut,
 )
+from ledger.services.operations import planned_hours_for_week
 from ledger.services.time import (
     TimeError,
     add_person_rate,
     approve_period,
+    approve_warnings,
     get_or_create_period,
     hundredths_to_hours,
     period_hours_total,
@@ -70,6 +72,7 @@ def _employee_week(session: Session, period: TimesheetPeriod) -> WeekOut:
             )
             for line in lines
         ],
+        planned=planned_hours_for_week(session, period.person_id, period.week_start),
     )
 
 
@@ -120,6 +123,7 @@ def _admin_week(session: Session, period: TimesheetPeriod) -> WeekAdminOut:
         hours_total=period_hours_total(session, period),
         amount_cents=total_amount,
         lines=admin_lines,
+        warnings=approve_warnings(session, period),
     )
 
 

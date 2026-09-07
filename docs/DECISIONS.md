@@ -240,8 +240,12 @@ pipeline nodes and burn on `/awards/:id` and an alerts list. Phase 7 may
 add `/audit` and a charges CSV. Phase 8 may add `/awards/new`, person and
 rate forms on `/people`, header/mod/policy on `/awards/:id`, and dropdowns
 on `/audit`. Phase 9 may add login management on `/people` and header /
-CLINs / unused-award delete on `/awards/:id`. Do not add screens beyond
-that map.
+CLINs / unused-award delete on `/awards/:id`. Phase 10 may add `/home`
+(operations board), `/staffing` (forward plan vs capacity vs remaining),
+search in the shell, a portfolio table, planned-vs-logged hours on
+`/me/week` (no dollars), approve warnings, funding expectations, expected
+invoice dates, and compliance↔document links. Do not add screens beyond
+that map. No GL, payroll, email, or agency e-file (D13).
 
 ---
 
@@ -643,3 +647,86 @@ remaining (record a mod for money). D17 unchanged.
 Otherwise 409 — set `status_code = closed` instead. Delete removes the
 award’s child rows and on-disk document files. Posted actuals are never
 stripped. Employees 403. D18 cards unchanged.
+
+---
+
+## D40 — Home is this week’s decisions, not a mailbox
+
+Admin `GET /home?as_of=` is computed on read: missing timesheets for the
+week containing `as_of`, submitted approvals, compliance due within 14
+days, open commitments whose expected (or effective) date is 14+ days
+ago, a month-close checklist through that week, and one portfolio row
+per award (remaining funded/approved, runway, alert flags, next
+compliance due). Not email (D34). Employees 403. D18 unchanged.
+
+Admin `GET /search?q=` matches award short code/title, person name/
+username, CLIN number, and document title. No dollars in search hits
+that employees could see — the route is admin-only.
+
+---
+
+## D41 — Staffing is a forward view; assignments still do not post
+
+Admin `GET /staffing?week_start=&weeks=` (default 8, max 12) compares
+capacity, assigned hours, and logged hours per person per week. Slack
+and overload are informational. Plan dollars use the current rate stack
+as-of that Monday (preview, not a charge) and are compared to remaining
+personnel and remaining funded. Hours by task vs assignment travel with
+the same payload.
+
+`POST /staffing/scenario` answers “what if this person works N hours/week
+on this award” for a window. It does not write rows.
+
+Utilization is hours by `time_code` (award vs `ird`/`bp`/`pto`/`holiday`),
+not payroll. Included on staffing. Employees 403. D7 still: assignments
+prefill; they do not post.
+
+---
+
+## D42 — Expected invoices, funding expectations, and compliance files
+
+`commitment.expected_date` is optional ISO. Aging uses
+`COALESCE(expected_date, effective_date)`. It is not remaining.
+
+`funding_expectation` is a dated expected increment (cents + notes) on
+one award. It is **not** remaining and **not** a pipeline node (D32) and
+**not** an unexercised CLIN (D17). Recording a mod is what changes
+funded remaining (D5).
+
+`compliance_item.document_id` may point at a document on the same award.
+Linking a file does not auto-complete the item.
+
+Exercising a CLIN still does not change funded remaining (D39). The UI
+prompts for a mod; Ledger does not invent one.
+
+---
+
+## D43 — Overrun policy is stop / warn / allow; employees stay unconstrained
+
+`award.overrun_policy` is stamped from `award_type` (`stop`, `warn`,
+`allow`) and may be patched later. Defaults: CPFF/TM/grant `stop`, FFP
+`warn`, internal `allow`. `enforce_ceiling` still gates the hard 409
+when remaining **funded** would go negative (existing Phase 2 rule).
+
+On **admin approve** (not employee submit):
+
+- Closed award or closed task is still 400 on the week write (D22).
+- `stop` + `enforce_ceiling`: 409 if this week’s labor would exceed
+  funded remaining (unchanged).
+- `warn`: approve succeeds; the response includes warnings when hours on
+  an award exceed that week’s assignment, or remaining personnel or
+  funded would go negative.
+- `allow`: no remaining warnings; assignment-exceed is still a warning.
+
+Employee submit stays unconstrained (D10): no 40-hour rule, no
+must-match-assignment, no warn-on-submit. `/me/week` may show planned
+hours vs logged hours **without dollars** (D18, D11 employee display).
+
+---
+
+## D44 — As-of dates are shared; close is a checklist
+
+Home, staffing, utilization, burn, alerts, and the portfolio table share
+an `as_of` or `week_start` (Monday). Month-close on `/home` lists weeks
+not approved through that Monday, draft periods, and open commitments.
+The charges CSV (D36) remains the dump; close does not post to a GL.

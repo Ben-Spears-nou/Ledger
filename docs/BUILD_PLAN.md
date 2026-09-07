@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D39). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D44). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,7 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–9.** There is no Phase 10 in this plan.
+**This document specifies Phases 0–10.** There is no Phase 11 in this plan.
 
 ---
 
@@ -817,6 +817,56 @@ add email reset or GL.
 
 ---
 
+## Phase 10 — Operations: staffing, home, loops, overrun, search
+
+Turn registers into Monday decisions (D40–D44). Small schema:
+`overrun_policy`, `commitment.expected_date`, `compliance_item.document_id`,
+`funding_expectation`. No GL, payroll, or email.
+
+**Tasks**
+
+- Record D40–D44. Alembic head `0008_phase10_operations`.
+- Stamp `overrun_policy` from award type; PATCH on the award header.
+- Admin `GET /home?as_of=`: missing weeks, approvals, compliance due
+  14 days, aging open commitments, close checklist, portfolio rows with
+  remaining / runway / alerts / next due.
+- Admin `GET /staffing?week_start=&weeks=`: capacity vs assigned vs
+  logged, plan dollars vs remaining personnel/funded, hours by task,
+  utilization by time_code. `POST /staffing/scenario` does not persist.
+- Admin `GET /search?q=`.
+- `commitment.expected_date`; PATCH commitment; aging uses expected or
+  effective date.
+- `funding_expectation` CRUD on the award (not remaining).
+- `compliance_item.document_id` on the same award.
+- CLIN exercise still prompts for a mod in the UI (no auto-mod).
+- Approve returns `warnings`. 409 on funded remaining only when
+  `enforce_ceiling` / `stop`. Employee submit unchanged. `/me/week`
+  planned vs logged hours, no dollars.
+- UI: `/home`, `/staffing`, portfolio table, header search, award
+  loops, approvals warnings, My week planned hours.
+- Lookups `audit_actions` include new action names.
+
+**Acceptance criteria**
+
+- Alembic head is `0008_phase10_operations`. `funding_expectation` is a
+  table; remaining views still exclude pipeline, options, and
+  expectations.
+- Home lists a person with an active login and no submitted/approved
+  week as missing. Employee 403 on `/home`, `/staffing`, `/search`.
+- Two awards assigned over capacity: staffing marks overload. Scenario
+  returns loaded cents without inserting an assignment.
+- CPFF approve that would exceed funded remaining is still 409. FFP
+  (`warn`) approve succeeds with a warning. Assignment-exceed is a
+  warning, never 409.
+- Funding expectation cents do not change `remaining_funded_cents`.
+  Linking a document to compliance does not mark it done.
+- Search finds an award short code. D18 keys unchanged. `/me/week`
+  has no dollar fields.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–9.
+
+---
+
 ## Later work (not a numbered phase)
 
 Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
@@ -825,12 +875,14 @@ QuickBooks.
 UI map:
 
 - `/login` — Phase 2.5
-- `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
+- `/home` — admin operations board (Phase 10)
+- `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3; planned vs logged in Phase 10)
 - `/me/password` — change password (Phase 2.5 / D20)
-- `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8)
+- `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8); table + as-of (Phase 10)
+- `/staffing` — forward staffing, utilization, scenario (Phase 10)
 - `/awards/new` — admin award wizard (Phase 8)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9)
-- `/approvals` — submitted time (Phase 2.5)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10)
+- `/approvals` — submitted time (Phase 2.5); warnings (Phase 10)
 - `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9)
 - `/instruments` — shared costs and splits (Phase 4)
 - `/compliance` — due dates across awards (Phase 5)

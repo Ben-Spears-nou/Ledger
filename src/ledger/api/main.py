@@ -32,6 +32,12 @@ from ledger.api.routers.forecast import (
     award_pipeline_router,
     pipeline_router,
 )
+from ledger.api.routers.operations import (
+    funding_router,
+    home_router,
+    search_router,
+    staffing_router,
+)
 from ledger.api.routers.schedule import (
     assignments_router,
     award_tasks_router,
@@ -95,6 +101,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     application.include_router(pipeline_router)
     application.include_router(award_burn_router)
     application.include_router(alerts_router)
+    application.include_router(home_router)
+    application.include_router(staffing_router)
+    application.include_router(search_router)
+    application.include_router(funding_router)
     application.include_router(me_router)
     application.include_router(approvals_router)
     application.include_router(audit.router)
