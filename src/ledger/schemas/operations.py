@@ -195,7 +195,7 @@ class SearchHitOut(BaseModel):
     """One search match. Admin-only; may include money-free labels."""
 
     kind: str
-    id: int
+    id: int | str
     label: str
     award_id: int | None = None
     href: str

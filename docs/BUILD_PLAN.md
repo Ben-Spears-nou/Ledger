@@ -14,7 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–11.** There is no Phase 12 in this plan.
+**This document specifies Phases 0–12.** There is no Phase 13 in this plan.
 
 ---
 
@@ -548,6 +548,8 @@ Phase 6–7.
   `--reload` only on loopback.
 - UI `fetch` uses `window.location.origin` unless `VITE_API_URL` is set.
 - README: build UI, opt-in `0.0.0.0`, firewall, URL `http://<host>:8000`.
+- `python tasks.py pack` writes `dist/ledger-team/` (start script + built UI)
+  for a second team lead’s own instance.
 
 **Acceptance criteria**
 
@@ -922,6 +924,40 @@ not rewritten (D45, D5). No new tables. Alembic head stays
 
 ---
 
+## Phase 12 — Common language, contract schedule, Gantt
+
+Operators can find Ledger words, confirm a starter schedule from a
+contract, and print a Gantt of that schedule (D46–D48). Not remaining
+money. Alembic `0009_phase12_schedule_gantt`.
+
+**Tasks**
+
+- Record D46–D48. Seed `glossary_term` / `glossary_alias`. Lookups
+  include `schedule_kinds`.
+- `GET /glossary`. Search matches aliases. UI `/help`.
+- `schedule_item` CRUD. `POST .../schedule/propose` (draft only) and
+  `.../confirm`. Template from PoP/phase; extract dated lines from
+  pasted text or a `.txt`/`.csv` document file.
+- `GET /gantt` and `GET /awards/{id}/gantt`: completed / remaining /
+  behind. UI `/gantt` plus award page. Printable.
+- Remaining views unchanged. Employees 403 on schedule/Gantt writes and
+  Gantt GETs. D18 unchanged.
+
+**Acceptance criteria**
+
+- Alembic head is `0009_phase12_schedule_gantt`.
+- Search “what’s left” hits remaining (glossary). `GET /glossary` works
+  for an employee.
+- Propose does not insert rows. Confirm inserts; remaining cents
+  unchanged. Extract from a `.txt` contract file includes a dated
+  deliverable line.
+- Open item with `due_date` yesterday is `behind`; `done` is
+  `completed`. Employee 403 on `/gantt`.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–11.
+
+---
+
 ## Later work (not a numbered phase)
 
 Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
@@ -936,10 +972,12 @@ UI map:
 - `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8); table + as-of (Phase 10)
 - `/staffing` — forward staffing, utilization, scenario (Phase 10)
 - `/awards/new` — admin award wizard (Phase 8)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10); End/Delete on assignment/task/policy/document/open compliance/open purchase rows (Phase 11)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10); End/Delete on assignment/task/policy/document/open compliance/open purchase rows (Phase 11); contract schedule propose/confirm + Gantt (Phase 12)
 - `/approvals` — submitted time (Phase 2.5); warnings (Phase 10)
 - `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9); facts PATCH; Delete on roster, rate, capacity, and assignment rows (Phase 11)
 - `/instruments` — shared costs and splits (Phase 4); unused unposted delete (Phase 11)
 - `/compliance` — due dates across awards (Phase 5); delete open item (Phase 11)
+- `/help` — glossary / common language (Phase 12)
+- `/gantt` — schedule bars: completed, remaining, behind (Phase 12)
 - `/alerts` — 75% and PoP warnings (Phase 6)
 - `/audit` — event log and charges CSV (Phase 7); dropdown filters (Phase 8)

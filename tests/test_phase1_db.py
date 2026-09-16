@@ -44,6 +44,10 @@ REQUIRED_TABLES = {
     "pipeline_kind",
     "pipeline_node",
     "funding_expectation",
+    "glossary_term",
+    "glossary_alias",
+    "schedule_kind",
+    "schedule_item",
 }
 
 
@@ -135,4 +139,4 @@ def test_alembic_upgrade_on_empty_database(tmp_path: Path, monkeypatch: pytest.M
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
     assert REQUIRED_TABLES <= tables
     assert "alembic_version" in tables
-    assert version == "0008_phase10_operations"
+    assert version == "0009_phase12_schedule_gantt"

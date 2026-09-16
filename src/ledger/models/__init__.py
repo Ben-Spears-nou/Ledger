@@ -12,6 +12,12 @@ from ledger.models.awards import (
 from ledger.models.base import Base
 from ledger.models.budgets import BudgetLine, BudgetVersion
 from ledger.models.commitments import Commitment, Instrument, InstrumentShare
+from ledger.models.contract_schedule import (
+    GlossaryAlias,
+    GlossaryTerm,
+    ScheduleItem,
+    ScheduleKind,
+)
 from ledger.models.documents import (
     ComplianceItem,
     ComplianceKind,
@@ -66,6 +72,8 @@ __all__ = [
     "Document",
     "DocumentKind",
     "FundingExpectation",
+    "GlossaryAlias",
+    "GlossaryTerm",
     "Instrument",
     "InstrumentShare",
     "Organization",
@@ -76,6 +84,8 @@ __all__ = [
     "PipelineNode",
     "RatePolicyTemplate",
     "Role",
+    "ScheduleItem",
+    "ScheduleKind",
     "Task",
     "TimeCode",
     "TimesheetLine",

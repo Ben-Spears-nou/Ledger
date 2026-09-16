@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Task runner for Ledger: ``install``, ``lint``, ``test``, ``build-ui``, ``run``, ``db-init``, ``backup``.
+"""Task runner for Ledger: ``install``, ``lint``, ``test``, ``build-ui``, ``pack``, ``run``, ``db-init``, ``backup``.
 
 Stdlib-only so it works before dependencies are installed, and on Windows where
 ``make`` is typically unavailable. The ``Makefile`` delegates here, so
@@ -139,6 +139,70 @@ def task_build_ui() -> int:
     return _run([npm, "run", "build"], cwd=web)
 
 
+PACK_ROOT_FILES = (
+    "pyproject.toml",
+    "tasks.py",
+    "alembic.ini",
+    ".env.example",
+)
+PACK_ROOT_DIRS = ("src", "db", "alembic")
+PACK_OUTPUT_NAME = "ledger-team"
+
+
+def pack_output_dir(root: Path | None = None) -> Path:
+    """Folder written by ``python tasks.py pack`` (gitignored under ``dist/``)."""
+    return (root or PROJECT_ROOT) / "dist" / PACK_OUTPUT_NAME
+
+
+def copy_team_bundle(dest: Path, *, root: Path | None = None) -> Path:
+    """Copy a runnable team-lead tree into ``dest``. Requires ``web/dist``."""
+    source = root or PROJECT_ROOT
+    web_index = source / "web" / "dist" / "index.html"
+    if not web_index.is_file():
+        raise FileNotFoundError("web/dist is missing. Run python tasks.py build-ui, then pack.")
+    dest = dest.resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in PACK_ROOT_FILES:
+        src = source / name
+        if not src.is_file():
+            raise FileNotFoundError(f"missing {src}")
+        shutil.copy2(src, dest / name)
+    for name in PACK_ROOT_DIRS:
+        src = source / name
+        if not src.is_dir():
+            raise FileNotFoundError(f"missing {src}")
+        target = dest / name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(
+            src,
+            target,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+    web_dest = dest / "web" / "dist"
+    if web_dest.exists():
+        shutil.rmtree(web_dest)
+    shutil.copytree(source / "web" / "dist", web_dest)
+    shutil.copy2(source / "pack" / "start-ledger.bat", dest / "start-ledger.bat")
+    shutil.copy2(source / "pack" / "start-ledger.sh", dest / "start-ledger.sh")
+    shutil.copy2(source / "pack" / "prepare_instance.py", dest / "prepare_instance.py")
+    shutil.copy2(source / "pack" / "TEAM.md", dest / "README.md")
+    return dest
+
+
+def task_pack() -> int:
+    """Assemble ``dist/ledger-team`` for another team lead (D8/D28)."""
+    dest = pack_output_dir()
+    try:
+        copy_team_bundle(dest)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"pack: {dest}", flush=True)
+    print("Zip that folder and give it to one team lead. Do not merge databases.")
+    return 0
+
+
 def task_run() -> int:
     """Serve the FastAPI application with uvicorn."""
     if not _is_installed("ledger.api.main"):
@@ -222,6 +286,7 @@ TASKS = {
     "run": task_run,
     "db-init": task_db_init,
     "backup": task_backup,
+    "pack": task_pack,
 }
 
 

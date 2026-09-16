@@ -667,4 +667,7 @@ def search_ledger(session: Session, query: str) -> SearchOut:
             )
         )
 
+    from ledger.services.glossary import glossary_search_hits
+
+    hits.extend(glossary_search_hits(session, needle))
     return SearchOut(query=needle, hits=hits)

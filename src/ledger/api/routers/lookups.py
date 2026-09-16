@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db
 from ledger.models import UserAccount
+from ledger.models.contract_schedule import ScheduleKind
 from ledger.models.documents import ComplianceKind, ComplianceStatus, DocumentKind
 from ledger.models.lookups import (
     Agency,
@@ -128,6 +129,10 @@ def all_lookups(
         "pipeline_kinds": [
             {"kind_code": row.kind_code, "description": row.description}
             for row in session.scalars(select(PipelineKind).order_by(PipelineKind.kind_code))
+        ],
+        "schedule_kinds": [
+            {"kind_code": row.kind_code, "description": row.description}
+            for row in session.scalars(select(ScheduleKind).order_by(ScheduleKind.kind_code))
         ],
         "overrun_policies": ["stop", "warn", "allow"],
         "audit_actions": list(AUDIT_ACTIONS),

@@ -246,8 +246,10 @@ search in the shell, a portfolio table, planned-vs-logged hours on
 `/me/week` (no dollars), approve warnings, funding expectations, expected
 invoice dates, and compliance↔document links. Phase 11 may add End/Delete
 on unused people registers, award tasks/policies/documents/compliance, and
-unposted instruments (D45). Do not add screens beyond that map. No GL,
-payroll, email, or agency e-file (D13).
+unposted instruments (D45). Phase 12 may add `/help` (common language),
+contract-schedule propose/confirm on `/awards/:id`, and `/gantt` (D46–D48).
+Do not add screens beyond that map. No GL, payroll, email, or agency
+e-file (D13).
 
 ---
 
@@ -454,6 +456,11 @@ refuses a non-loopback bind while `LEDGER_SECRET_KEY` is still the
 shipped default. HTTPS and SSO stay out of v1 (D13). SQLite stays on the
 host’s local disk (D15). Windows Firewall and “stay up when I log off”
 are OS work, not a product rewrite.
+
+A second team gets their own folder (`python tasks.py pack` →
+`dist/ledger-team/`, then zip). Each host has its own `.env`, secret, and
+SQLite. Do not merge databases. PyInstaller / a single `.exe` is not
+required for this layout.
 
 ---
 
@@ -662,8 +669,10 @@ per award (remaining funded/approved, runway, alert flags, next
 compliance due). Not email (D34). Employees 403. D18 unchanged.
 
 Admin `GET /search?q=` matches award short code/title, person name/
-username, CLIN number, and document title. No dollars in search hits
-that employees could see — the route is admin-only.
+username, CLIN number, document title, and glossary aliases (D46). No
+dollars in search hits that employees could see — the route is
+admin-only. Authenticated `GET /glossary` is the help list (employees
+included).
 
 ---
 
@@ -764,3 +773,72 @@ priced or posted money (D5). A **typo** is not history.
 require a login (D38). Last active admin cannot be deleted.
 
 Employees 403. D18 unchanged. Remaining views unchanged. No new tables.
+
+---
+
+## D46 — Common language is a glossary, not a chatbot
+
+Operators ask “where is remaining?” or “what is a CLIN?” Search and Help
+use one vocabulary. `glossary_term` is the Ledger word (`remaining`,
+`task`, `schedule`). `glossary_alias` maps everyday phrases (`what’s
+left`, `SOW item`, `Gantt`) onto that word. Hits link to a screen
+(`href`), not a generated answer.
+
+No LLM. Definitions are seed data. Admins see glossary hits in
+`GET /search`. Anyone logged in can `GET /glossary` and open `/help`.
+D18 unchanged: employees still do not see dollars.
+
+---
+
+## D47 — Contract schedule is proposed, then confirmed
+
+A `schedule_item` is a dated milestone, deliverable, report, or PoP mark
+on one award. It is **not** remaining money (D4), **not** a timesheet
+task (D22), and **not** a compliance obligation (D30). Status is `open` |
+`done` | `waived`, same pattern as compliance. Optional `start_date`;
+`due_date` is required. Optional `source_document_id` on the same award.
+
+`POST /awards/{id}/schedule/propose` builds a **draft** from:
+
+1. The award PoP and phase (a starter template the operator can edit).
+2. Optional pasted text and/or a stored `.txt` / `.csv` contract file
+   (dated lines that look like deliverables). PDFs are not parsed in this
+   phase; paste the SOW text or confirm the template.
+
+The contract-schedule panel may upload `.pdf`, `.doc`, and `.docx`
+directly into the existing document register (D29). Upload support does
+not imply text extraction: `.txt` / `.csv` are extracted in this phase;
+for PDF or Word, paste the relevant SOW text before proposing.
+
+Nothing is written until `POST /awards/{id}/schedule/confirm` with the
+rows the operator kept. Confirm is additive; it does not invent funded
+cents or tasks. Manual `POST` / `PATCH` / `DELETE` remain for typos
+(D45: unused schedule rows delete).
+
+Admin-only writes. Remaining views unchanged.
+
+Proposed tables:
+
+- `schedule_kind` — `milestone`, `deliverable`, `report`, `pop`, `other`
+- `schedule_item` — `schedule_item_id`, `award_id`, `kind_code`, `title`,
+  `start_date` (nullable ISO), `due_date`, `status_code` (FK
+  `compliance_status`), `notes`, `completed_at`, `source_document_id`,
+  `origin_code` (`template` | `extract` | `manual`), `created_at`,
+  `created_by`
+
+---
+
+## D48 — The Gantt is a read of confirmed schedule rows
+
+`GET /awards/{id}/gantt` and `GET /gantt` compute bars from `schedule_item`
+plus the award PoP window. No stored Gantt table. No MS Project file.
+
+As-of today (ISO dates, no float):
+
+- **completed** — `status_code` is `done` or `waived`
+- **remaining** — `open` and `due_date >= as_of`
+- **behind** — `open` and `due_date < as_of`
+
+Bar start is `start_date` or the award `pop_start`. Bar end is `due_date`.
+The UI at `/gantt` (and the award page) is printable. Employees 403 on
+Gantt APIs. D18 unchanged.

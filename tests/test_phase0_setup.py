@@ -105,6 +105,7 @@ def test_task_names_match_the_build_plan() -> None:
         "run",
         "db-init",
         "backup",
+        "pack",
     }
 
 

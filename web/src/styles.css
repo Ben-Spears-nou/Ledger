@@ -201,3 +201,64 @@ header.app .header-search input {
 .search-hits {
   margin: 0.75rem 1.25rem 0;
 }
+
+.gantt-row {
+  margin-bottom: 0.55rem;
+}
+
+.gantt-label {
+  font-size: 0.9rem;
+  margin-bottom: 0.15rem;
+}
+
+.gantt-lane {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.gantt-track {
+  position: relative;
+  height: 0.85rem;
+  background: #e6e0d4;
+  border-radius: 4px;
+}
+
+.gantt-bar {
+  height: 100%;
+  border-radius: 4px;
+  min-width: 0.4rem;
+}
+
+.gantt-bar.completed {
+  background: #3d6b54;
+}
+
+.gantt-lane.completed {
+  color: #3d6b54;
+}
+
+.gantt-bar.remaining {
+  background: #2f6f9f;
+}
+
+.gantt-lane.remaining {
+  color: #2f6f9f;
+}
+
+.gantt-bar.behind {
+  background: #8a1f1f;
+}
+
+.gantt-lane.behind {
+  color: #8a1f1f;
+}
+
+@media print {
+  header.app,
+  .gantt-toolbar form button,
+  .header-search {
+    display: none;
+  }
+}
+

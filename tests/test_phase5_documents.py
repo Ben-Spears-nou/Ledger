@@ -89,6 +89,27 @@ def test_second_file_conflict_and_bad_suffix(client: TestClient) -> None:
     assert second.status_code == 409
 
 
+def test_legacy_word_document_upload(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client, admin, short_code="DOCDOC", type_code="FFP", template="FFP_INTERNAL", oh_pct=0
+    )
+    created = client.post(
+        f"/awards/{award['award_id']}/documents",
+        json={"kind_code": "contract", "title": "Legacy contract"},
+        headers=auth_header(admin),
+    )
+    doc_id = created.json()["document_id"]
+    uploaded = client.post(
+        f"/documents/{doc_id}/file",
+        files={"file": ("contract.doc", b"legacy-word-bytes", "application/msword")},
+        headers=auth_header(admin),
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    assert uploaded.json()["original_filename"] == "contract.doc"
+    assert uploaded.json()["has_file"] is True
+
+
 def test_oversize_file_rejected(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ledger.services.documents.MAX_DOCUMENT_BYTES", 8)
     admin = login(client)

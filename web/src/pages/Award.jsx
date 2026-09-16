@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import AwardSchedule from "./AwardSchedule.jsx";
 import {
   api,
   centsToDollarInput,
@@ -139,6 +140,9 @@ export default function Award() {
   const [categories, setCategories] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [compliance, setCompliance] = useState([]);
+  const [scheduleItems, setScheduleItems] = useState([]);
+  const [scheduleChart, setScheduleChart] = useState(null);
+  const [scheduleKinds, setScheduleKinds] = useState([]);
   const [documentKinds, setDocumentKinds] = useState([]);
   const [complianceKinds, setComplianceKinds] = useState([]);
   const [pipelineKinds, setPipelineKinds] = useState([]);
@@ -259,6 +263,7 @@ export default function Award() {
     setDocumentKinds(lookups.document_kinds || []);
     setComplianceKinds(lookups.compliance_kinds || []);
     setPipelineKinds(lookups.pipeline_kinds || []);
+    setScheduleKinds(lookups.schedule_kinds || []);
     setStatuses(lookups.statuses || []);
     setAgencies(lookups.agencies || []);
     setInstruments(lookups.instruments || []);
@@ -271,15 +276,21 @@ export default function Award() {
       setAssignForm((current) => ({ ...current, person_id: String(personList[0].person_id) }));
     }
     try {
-      const [documentList, complianceList] = await Promise.all([
+      const [documentList, complianceList, scheduleList, ganttData] = await Promise.all([
         api(`/awards/${id}/documents`),
         api(`/awards/${id}/compliance`),
+        api(`/awards/${id}/schedule`),
+        api(`/awards/${id}/gantt`, { query: { as_of: todayIso() } }),
       ]);
       setDocuments(documentList);
       setCompliance(complianceList);
+      setScheduleItems(scheduleList);
+      setScheduleChart(ganttData);
     } catch (err) {
       setDocuments([]);
       setCompliance([]);
+      setScheduleItems([]);
+      setScheduleChart(null);
       throw err;
     }
     try {
@@ -2107,6 +2118,17 @@ export default function Award() {
         </table>
       </div>
 
+      <AwardSchedule
+        awardId={id}
+        documents={documents}
+        scheduleKinds={scheduleKinds}
+        items={scheduleItems}
+        chart={scheduleChart}
+        onReload={load}
+        onError={setError}
+        onNotice={setNotice}
+      />
+
       <div className="card">
         <h2>Documents</h2>
         <form onSubmit={addDocument}>
@@ -2152,6 +2174,7 @@ export default function Award() {
           <input
             key={docFileKey}
             type="file"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt,.csv,.zip"
             onChange={(event) =>
               setDocForm((current) => ({
                 ...current,

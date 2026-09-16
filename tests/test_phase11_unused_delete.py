@@ -38,7 +38,8 @@ def test_alembic_head_unchanged_and_lookups(client: TestClient) -> None:
         if not path.name.startswith("_")
     ]
     assert "0008_phase10_operations.py" in versions
-    assert not any(name.startswith("0009") for name in versions)
+    assert "0009_phase12_schedule_gantt.py" in versions
+    assert not any(name.startswith("0010") for name in versions)
 
 
 def test_assignment_delete_reopens_predecessor_and_omits_from_prefill(

@@ -769,3 +769,86 @@ CREATE TABLE IF NOT EXISTS pipeline_node (
 
 CREATE INDEX IF NOT EXISTS ix_pipeline_node_award
     ON pipeline_node (award_id);
+
+-- =====================================================================
+-- Glossary + contract schedule (Phase 12). Not remaining (D46–D48).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS glossary_term (
+    term_code    TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    definition   TEXT NOT NULL,
+    href         TEXT NOT NULL
+);
+INSERT INTO glossary_term (term_code, title, definition, href) VALUES
+    ('award', 'Award', 'One contract, grant, or internal pot. The timesheet charge code is this award, not a task.', '/portfolio'),
+    ('remaining', 'Remaining', 'Approved or funded money still available after open commitments and posted actuals. Pipeline, unexercised options, and schedule items are not remaining.', '/portfolio'),
+    ('pipeline', 'Pipeline', 'Forecast money that is not remaining: a proposal, next phase, or unexercised option.', '/portfolio'),
+    ('clin', 'CLIN', 'A contract line item. Unexercised options are pipeline money, not remaining.', '/portfolio'),
+    ('task', 'Task', 'A named work package on an award for time. Labor still posts to the award.', '/people'),
+    ('assignment', 'Assignment', 'Planned hours for a person on an award. It prefills a new week; it does not post dollars.', '/staffing'),
+    ('compliance', 'Compliance', 'A dated obligation (report, IRB, invoice). Not remaining money and not the Gantt.', '/compliance'),
+    ('document', 'Document', 'A register row on an award, with an optional file on this computer.', '/portfolio'),
+    ('schedule', 'Schedule', 'Confirmed milestones and deliverables from the contract. Confirm a draft before it is stored.', '/gantt'),
+    ('gantt', 'Gantt', 'A chart of confirmed schedule rows: completed, remaining, and behind as-of today.', '/gantt'),
+    ('commitment', 'Commitment', 'Open purchase, travel, or instrument share. Open cents are remaining committed until posted.', '/instruments'),
+    ('charge', 'Charge', 'Posted actuals. Ledger is not the official book.', '/audit'),
+    ('pop', 'Period of performance', 'Award start and end dates. Schedule bars use this window when a row has no start date.', '/gantt');
+
+CREATE TABLE IF NOT EXISTS glossary_alias (
+    alias        TEXT PRIMARY KEY,
+    term_code    TEXT NOT NULL REFERENCES glossary_term (term_code)
+);
+INSERT INTO glossary_alias (alias, term_code) VALUES
+    ('contract', 'award'),
+    ('grant', 'award'),
+    ('charge code', 'award'),
+    ('what''s left', 'remaining'),
+    ('whats left', 'remaining'),
+    ('money left', 'remaining'),
+    ('forecast', 'pipeline'),
+    ('option', 'clin'),
+    ('sow item', 'schedule'),
+    ('milestone', 'schedule'),
+    ('deliverable', 'schedule'),
+    ('due date', 'compliance'),
+    ('gantt chart', 'gantt'),
+    ('behind schedule', 'gantt'),
+    ('period of performance', 'pop'),
+    ('pop dates', 'pop'),
+    ('purchase', 'commitment'),
+    ('shared cost', 'commitment'),
+    ('actuals', 'charge');
+
+CREATE TABLE IF NOT EXISTS schedule_kind (
+    kind_code    TEXT PRIMARY KEY,
+    description  TEXT NOT NULL
+);
+INSERT INTO schedule_kind (kind_code, description) VALUES
+    ('milestone', 'Named event or gate'),
+    ('deliverable', 'Work product due to the sponsor'),
+    ('report', 'Progress or technical report on the contract schedule'),
+    ('pop', 'Period of performance mark'),
+    ('other', 'Other dated contract work');
+
+CREATE TABLE IF NOT EXISTS schedule_item (
+    schedule_item_id    INTEGER PRIMARY KEY,
+    award_id            INTEGER NOT NULL REFERENCES award (award_id),
+    kind_code           TEXT NOT NULL REFERENCES schedule_kind (kind_code),
+    title               TEXT NOT NULL,
+    start_date          TEXT,
+    due_date            TEXT NOT NULL,
+    status_code         TEXT NOT NULL REFERENCES compliance_status (status_code),
+    notes               TEXT,
+    completed_at        TEXT,
+    source_document_id  INTEGER REFERENCES document (document_id),
+    origin_code         TEXT NOT NULL CHECK (origin_code IN ('template', 'extract', 'manual')),
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by          INTEGER REFERENCES user_account (user_account_id),
+    CHECK (start_date IS NULL OR due_date >= start_date)
+);
+
+CREATE INDEX IF NOT EXISTS ix_schedule_item_award_due
+    ON schedule_item (award_id, due_date);
+CREATE INDEX IF NOT EXISTS ix_glossary_alias_term
+    ON glossary_alias (term_code);

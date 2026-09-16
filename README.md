@@ -51,10 +51,30 @@ browser (D28). SQLite stays on that host’s local disk (D15).
 
 Do not point teammates at Vite `:5173`. HTTPS and SSO are out of v1 (D13).
 
+## Another team lead (their own instance)
+
+Ledger is one organization per running copy (D8). Do not put every team
+in one database. Give each host a folder, not a shared cloud app.
+
+On a machine that already has Node and a built UI:
+
+```text
+python tasks.py build-ui
+python tasks.py pack
+```
+
+Zip `dist/ledger-team/` and send it to that team lead. They need Python
+3.11+ only. They double-click `start-ledger.bat` (first run: `.venv`,
+`.env` with a unique secret, `db-init`). Teammates still use
+`http://<their-host>:8000` after `LEDGER_API_HOST=0.0.0.0`. SQLite stays
+on **their** `%LOCALAPPDATA%\ledger`. Do not merge `.db` files. See
+`pack/TEAM.md`.
+
 Screens in `web/`: `/login`, `/home` (admin: this week’s decisions),
 `/me/week`, `/me/password`, `/approvals`,
 `/awards/new` (admin: create an award), `/awards/:id`, `/portfolio`,
 `/staffing` (admin: plan vs capacity vs remaining),
 `/people` (admin: people, logins, role/active/reset password, base rates, capacity, assignments; Delete on each row),
 `/instruments` (admin: shared costs), `/compliance` (admin: due dates),
+`/gantt` (admin: contract schedule chart), `/help` (glossary),
 `/alerts` (admin: 75% and PoP), `/audit` (admin: event log and charges CSV).

@@ -177,3 +177,17 @@ No new tables. `DELETE` unused register rows and `PATCH` assignment
 `effective_to` (D45). Posted `charge` snapshots (`person_rate_id`,
 `policy_id`) still block delete. Open purchase/travel rows may be
 deleted (not only cancelled). Award mods stay append-only.
+
+---
+
+## Glossary and contract schedule (Phase 12)
+
+| Table | Notes |
+|---|---|
+| `glossary_term` | Ledger word, definition, help `href` (D46) |
+| `glossary_alias` | Everyday phrase → `term_code`. Search expands these |
+| `schedule_kind` | `milestone`, `deliverable`, `report`, `pop`, `other` |
+| `schedule_item` | Dated contract work on an award. Not remaining, not a task, not compliance (D47). Gantt is computed (D48) |
+
+`origin_code` is `template`, `extract`, or `manual`. Status uses
+`compliance_status`. Remaining views unchanged.

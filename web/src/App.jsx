@@ -7,6 +7,8 @@ import Audit from "./pages/Audit.jsx";
 import Award from "./pages/Award.jsx";
 import AwardNew from "./pages/AwardNew.jsx";
 import Compliance from "./pages/Compliance.jsx";
+import Gantt from "./pages/Gantt.jsx";
+import Help from "./pages/Help.jsx";
 import Home from "./pages/Home.jsx";
 import Instruments from "./pages/Instruments.jsx";
 import Login from "./pages/Login.jsx";
@@ -76,9 +78,11 @@ function Shell({ children }) {
           {isAdmin ? <NavLink to="/staffing">Staffing</NavLink> : null}
           {isAdmin ? <NavLink to="/people">People</NavLink> : null}
           {isAdmin ? <NavLink to="/instruments">Instruments</NavLink> : null}
+          {isAdmin ? <NavLink to="/gantt">Gantt</NavLink> : null}
           {isAdmin ? <NavLink to="/compliance">Compliance</NavLink> : null}
           {isAdmin ? <NavLink to="/alerts">Alerts</NavLink> : null}
           {isAdmin ? <NavLink to="/audit">Audit</NavLink> : null}
+          <NavLink to="/help">Help</NavLink>
         </nav>
         <span>
           {isAdmin ? (
@@ -230,6 +234,26 @@ export default function App() {
               <Audit />
             </Shell>
           </RequireAdmin>
+        }
+      />
+      <Route
+        path="/gantt"
+        element={
+          <RequireAdmin>
+            <Shell>
+              <Gantt />
+            </Shell>
+          </RequireAdmin>
+        }
+      />
+      <Route
+        path="/help"
+        element={
+          <RequireAuth>
+            <Shell>
+              <Help />
+            </Shell>
+          </RequireAuth>
         }
       />
       <Route

@@ -29,6 +29,7 @@ from ledger.models import (
     InstrumentShare,
     PipelineNode,
     RatePolicyTemplate,
+    ScheduleItem,
     Task,
     TimesheetLine,
 )
@@ -720,6 +721,9 @@ def delete_award(session: Session, award: Award, *, actor_id: int | None) -> Non
     from ledger.config import get_settings
     from ledger.services.documents import stored_path
 
+    for row in session.scalars(select(ScheduleItem).where(ScheduleItem.award_id == award_id)):
+        row.source_document_id = None
+    session.flush()
     for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
         row.document_id = None
     session.flush()
@@ -732,6 +736,8 @@ def delete_award(session: Session, award: Award, *, actor_id: int | None) -> Non
     if docs_dir.is_dir():
         rmtree(docs_dir, ignore_errors=True)
 
+    for row in session.scalars(select(ScheduleItem).where(ScheduleItem.award_id == award_id)):
+        session.delete(row)
     for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
         session.delete(row)
     for row in session.scalars(select(PipelineNode).where(PipelineNode.award_id == award_id)):

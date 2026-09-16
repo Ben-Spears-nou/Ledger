@@ -20,6 +20,12 @@ from ledger.api.routers.commitments import (
     purchases_router,
     travel_router,
 )
+from ledger.api.routers.contract_schedule import (
+    award_schedule_router,
+    gantt_router,
+    glossary_router,
+    schedule_items_router,
+)
 from ledger.api.routers.documents import (
     award_compliance_router,
     award_documents_router,
@@ -105,6 +111,10 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     application.include_router(staffing_router)
     application.include_router(search_router)
     application.include_router(funding_router)
+    application.include_router(glossary_router)
+    application.include_router(gantt_router)
+    application.include_router(award_schedule_router)
+    application.include_router(schedule_items_router)
     application.include_router(me_router)
     application.include_router(approvals_router)
     application.include_router(audit.router)
