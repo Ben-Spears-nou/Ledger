@@ -801,14 +801,14 @@ task (D22), and **not** a compliance obligation (D30). Status is `open` |
 `POST /awards/{id}/schedule/propose` builds a **draft** from:
 
 1. The award PoP and phase (a starter template the operator can edit).
-2. Optional pasted text and/or a stored `.txt` / `.csv` contract file
-   (dated lines that look like deliverables). PDFs are not parsed in this
-   phase; paste the SOW text or confirm the template.
+2. Optional pasted text and/or a stored `.txt`, `.csv`, `.docx`, or
+   text-based `.pdf` contract file (dated lines that look like
+   deliverables). Scanned PDFs need OCR outside Ledger or pasted text.
 
 The contract-schedule panel may upload `.pdf`, `.doc`, and `.docx`
-directly into the existing document register (D29). Upload support does
-not imply text extraction: `.txt` / `.csv` are extracted in this phase;
-for PDF or Word, paste the relevant SOW text before proposing.
+directly into the existing document register (D29). Legacy binary `.doc`
+files are stored but not parsed; convert them to `.docx` or paste the
+relevant SOW text before proposing.
 
 Nothing is written until `POST /awards/{id}/schedule/confirm` with the
 rows the operator kept. Confirm is additive; it does not invent funded

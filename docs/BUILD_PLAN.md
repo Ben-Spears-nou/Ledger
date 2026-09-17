@@ -937,7 +937,8 @@ money. Alembic `0009_phase12_schedule_gantt`.
 - `GET /glossary`. Search matches aliases. UI `/help`.
 - `schedule_item` CRUD. `POST .../schedule/propose` (draft only) and
   `.../confirm`. Template from PoP/phase; extract dated lines from
-  pasted text or a `.txt`/`.csv` document file.
+  pasted text or a `.txt`, `.csv`, `.docx`, or text-based `.pdf`
+  document file. Scanned PDF and legacy `.doc` content requires paste.
 - `GET /gantt` and `GET /awards/{id}/gantt`: completed / remaining /
   behind. UI `/gantt` plus award page. Printable.
 - Remaining views unchanged. Employees 403 on schedule/Gantt writes and
@@ -949,8 +950,8 @@ money. Alembic `0009_phase12_schedule_gantt`.
 - Search “what’s left” hits remaining (glossary). `GET /glossary` works
   for an employee.
 - Propose does not insert rows. Confirm inserts; remaining cents
-  unchanged. Extract from a `.txt` contract file includes a dated
-  deliverable line.
+  unchanged. Extract from `.txt` and `.docx` contract files includes a
+  dated deliverable line; text-layer PDF parsing is covered.
 - Open item with `due_date` yesterday is `behind`; `done` is
   `completed`. Employee 403 on `/gantt`.
 - `python tasks.py lint` and `python tasks.py test` stay green, including

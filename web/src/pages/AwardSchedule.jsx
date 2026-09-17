@@ -190,9 +190,9 @@ export default function AwardSchedule({
           </div>
         </div>
         <p className="muted">
-          PDF, Word (.doc/.docx), text, and CSV files can be stored. Automatic
-          milestone extraction currently reads text and CSV; for PDF or Word,
-          paste the relevant SOW text below before proposing.
+          Text-based PDF, Word (.docx), text, and CSV files are parsed for
+          milestones. Scanned PDFs require pasted text. Legacy .doc files can
+          be stored, but must be converted to .docx or pasted below.
         </p>
         <label>Paste SOW / milestone text (optional)</label>
         <textarea

@@ -6,6 +6,10 @@ import calendar
 import re
 from datetime import UTC, date, datetime, timedelta
 
+from docx import Document as WordDocument
+from docx.opc.exceptions import PackageNotFoundError
+from pypdf import PdfReader
+from pypdf.errors import FileNotDecryptedError, PdfReadError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,13 +29,21 @@ from ledger.schemas.contract_schedule import (
 from ledger.services.audit import record_event
 from ledger.services.documents import stored_path
 
-EXTRACTABLE_EXT = frozenset({".txt", ".csv"})
+EXTRACTABLE_EXT = frozenset({".txt", ".csv", ".docx", ".pdf"})
 _KEYWORD = re.compile(
     r"deliverable|milestone|due|report|cdrl|\bsow\b|statement of work",
     re.IGNORECASE,
 )
 _ISO = re.compile(r"\b((?:19|20)\d{2}-\d{2}-\d{2})\b")
 _US = re.compile(r"\b([A-Za-z]+)\s+(\d{1,2}),\s*((?:19|20)\d{2})\b")
+_NUMERIC = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})\b")
+_DAY_MONTH = re.compile(r"\b(\d{1,2})[\s-]+([A-Za-z]+)[\s,-]+((?:19|20)\d{2})\b")
+_MONTH_YEAR = re.compile(r"\b([A-Za-z]+)\s+((?:19|20)\d{2})\b")
+_RELATIVE_MONTH = re.compile(
+    r"\b(?:month\s*(\d+)|(\d+)\s*months?\s*(?:after|from)\s*"
+    r"(?:award|award start|start|kickoff))\b",
+    re.IGNORECASE,
+)
 _MONTHS = {
     **{calendar.month_name[i].lower(): i for i in range(1, 13)},
     **{calendar.month_abbr[i].lower(): i for i in range(1, 13)},
@@ -244,6 +256,52 @@ def _us_date(month_name: str, day: str, year: str) -> date | None:
         return None
 
 
+def _add_months(value: date, months: int) -> date:
+    """Add calendar months, clamping the day to the target month."""
+    month_index = value.year * 12 + value.month - 1 + months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _dates_in_line(line: str, award: Award) -> list[date]:
+    """Recognize common absolute and award-relative contract dates."""
+    dates: list[date] = []
+    spans: list[tuple[int, int]] = []
+
+    def add(parsed: date | None, span: tuple[int, int]) -> None:
+        overlaps = any(span[0] < existing[1] and span[1] > existing[0] for existing in spans)
+        if parsed is not None and not overlaps:
+            dates.append(parsed)
+            spans.append(span)
+
+    for match in _ISO.finditer(line):
+        try:
+            add(date.fromisoformat(match.group(1)), match.span())
+        except ValueError:
+            continue
+    for match in _US.finditer(line):
+        add(_us_date(match.group(1), match.group(2), match.group(3)), match.span())
+    for match in _NUMERIC.finditer(line):
+        try:
+            add(date(int(match.group(3)), int(match.group(1)), int(match.group(2))), match.span())
+        except ValueError:
+            continue
+    for match in _DAY_MONTH.finditer(line):
+        add(_us_date(match.group(2), match.group(1), match.group(3)), match.span())
+    for match in _MONTH_YEAR.finditer(line):
+        month = _MONTHS.get(match.group(1).lower())
+        if month is not None:
+            year = int(match.group(2))
+            add(date(year, month, calendar.monthrange(year, month)[1]), match.span())
+    award_start = _parse_date(award.pop_start)
+    for match in _RELATIVE_MONTH.finditer(line):
+        count = int(match.group(1) or match.group(2))
+        add(_add_months(award_start, count), match.span())
+    return dates
+
+
 def extract_dated_lines(
     text: str,
     award: Award,
@@ -253,20 +311,23 @@ def extract_dated_lines(
     """Heuristic dated deliverable/milestone lines from contract text."""
     found: list[ScheduleItemOut] = []
     seen: set[tuple[str, str]] = set()
-    for raw in text.splitlines():
-        line = " ".join(raw.split())
+    lines = [" ".join(raw.split()) for raw in text.splitlines()]
+    lines = [line for line in lines if line]
+    for index, line in enumerate(lines):
         if not line or not _KEYWORD.search(line):
             continue
-        dates: list[date] = []
-        for match in _ISO.finditer(line):
-            try:
-                dates.append(date.fromisoformat(match.group(1)))
-            except ValueError:
-                continue
-        for match in _US.finditer(line):
-            parsed = _us_date(match.group(1), match.group(2), match.group(3))
-            if parsed is not None:
-                dates.append(parsed)
+        dates = _dates_in_line(line, award)
+        if not dates:
+            # PDF extraction and Word tables often put the title and date on
+            # adjacent lines/cells. Keep the context narrow to avoid joining
+            # unrelated schedule clauses.
+            for following in lines[index + 1 : index + 3]:
+                line = f"{line} {following}"
+                dates = _dates_in_line(line, award)
+                if dates:
+                    break
+                if _KEYWORD.search(following):
+                    break
         if not dates:
             continue
         due = dates[-1]
@@ -303,12 +364,34 @@ def _read_document_text(row: Document) -> tuple[str | None, str | None]:
     ext = (row.stored_ext or path.suffix or "").lower()
     if not ext.startswith("."):
         ext = f".{ext}" if ext else ""
+    if ext == ".doc":
+        return None, "Legacy .doc files cannot be parsed; convert to .docx or paste SOW text"
     if ext not in EXTRACTABLE_EXT:
-        return None, "PDF and Office files are not parsed; paste SOW text or confirm the template"
+        return None, "This file type cannot be parsed; paste SOW text or confirm the template"
     try:
-        return path.read_text(encoding="utf-8", errors="replace"), None
-    except OSError:
+        if ext in {".txt", ".csv"}:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        elif ext == ".docx":
+            document = WordDocument(path)
+            parts = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
+            for table in document.tables:
+                for row_cells in table.rows:
+                    line = " | ".join(
+                        cell.text.strip() for cell in row_cells.cells if cell.text.strip()
+                    )
+                    if line:
+                        parts.append(line)
+            text = "\n".join(parts)
+        else:
+            reader = PdfReader(path)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except (OSError, PackageNotFoundError, PdfReadError, FileNotDecryptedError):
         return None, "could not read document file"
+    if not text.strip():
+        if ext == ".pdf":
+            return None, "PDF has no extractable text; it may be scanned. Paste SOW text instead"
+        return None, "document contains no extractable text"
+    return text, None
 
 
 def propose_schedule(
@@ -335,7 +418,11 @@ def propose_schedule(
                 notes.append("no dated deliverable lines found in the file")
     pasted = (payload.text or "").strip()
     if pasted:
-        items.extend(extract_dated_lines(pasted, award, source_document_id=source_id))
+        extracted = extract_dated_lines(pasted, award, source_document_id=source_id)
+        if extracted:
+            items.extend(extracted)
+        else:
+            notes.append("no dated deliverable lines found in the pasted text")
     notes.append("Nothing is saved until you confirm the rows you want to keep.")
     return ScheduleProposeOut(award_id=award.award_id, notes=notes, items=items)
 

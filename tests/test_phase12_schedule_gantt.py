@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+from types import SimpleNamespace
+
+from docx import Document as WordDocument
 from fastapi.testclient import TestClient
 from tests.conftest import auth_header, login
 from tests.test_phase2_time import _award, _employee
 from tests.test_phase5_documents import D18_KEYS, _remaining_approved
 
 from ledger.config import PROJECT_ROOT
+from ledger.services import contract_schedule
 
 
 def test_alembic_head_is_phase12() -> None:
@@ -152,3 +157,115 @@ def test_extract_from_txt_contract_and_gantt_lanes(client: TestClient) -> None:
         ).status_code
         == 403
     )
+
+
+def test_extract_common_contract_dates_and_wrapped_lines() -> None:
+    award = SimpleNamespace(award_id=7, pop_start="2026-01-01")
+    text = """\
+Deliverable A due 6/15/2026
+Milestone B due 15 July 2026
+Progress report due August 2026
+CDRL A004 due Month 6 after award
+Deliverable E
+September 15, 2026
+"""
+    rows = contract_schedule.extract_dated_lines(text, award, source_document_id=12)
+
+    assert [row.due_date for row in rows] == [
+        "2026-06-15",
+        "2026-07-15",
+        "2026-08-31",
+        "2026-07-01",
+        "2026-09-15",
+    ]
+    assert all(row.origin_code == "extract" for row in rows)
+    assert all(row.source_document_id == 12 for row in rows)
+
+
+def test_extract_from_docx_table(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client, admin, short_code="P12DOCX", type_code="FFP", template="FFP_INTERNAL", oh_pct=0
+    )
+    award_id = award["award_id"]
+    created = client.post(
+        f"/awards/{award_id}/documents",
+        json={"kind_code": "contract", "title": "Word SOW"},
+        headers=auth_header(admin),
+    )
+    doc_id = created.json()["document_id"]
+
+    document = WordDocument()
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Deliverable: Prototype review"
+    table.cell(0, 1).text = "Due 10/15/2026"
+    content = BytesIO()
+    document.save(content)
+    upload = client.post(
+        f"/documents/{doc_id}/file",
+        files={
+            "file": (
+                "sow.docx",
+                content.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+        headers=auth_header(admin),
+    )
+    assert upload.status_code == 200, upload.text
+
+    proposed = client.post(
+        f"/awards/{award_id}/schedule/propose",
+        json={"document_id": doc_id},
+        headers=auth_header(admin),
+    )
+    assert proposed.status_code == 200, proposed.text
+    extracted = [row for row in proposed.json()["items"] if row["origin_code"] == "extract"]
+    assert [row["due_date"] for row in extracted] == ["2026-10-15"]
+
+
+def test_pdf_text_and_scanned_pdf_feedback(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "contract.pdf"
+    path.write_bytes(b"%PDF fake test input")
+    row = SimpleNamespace(stored_ext=".pdf")
+    monkeypatch.setattr(contract_schedule, "stored_path", lambda _row: path)
+
+    class TextPage:
+        def extract_text(self) -> str:
+            return "Deliverable A due 2026-05-01"
+
+    monkeypatch.setattr(
+        contract_schedule,
+        "PdfReader",
+        lambda _path: SimpleNamespace(pages=[TextPage()]),
+    )
+    text, note = contract_schedule._read_document_text(row)
+    assert text == "Deliverable A due 2026-05-01"
+    assert note is None
+
+    class ScannedPage:
+        def extract_text(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        contract_schedule,
+        "PdfReader",
+        lambda _path: SimpleNamespace(pages=[ScannedPage()]),
+    )
+    text, note = contract_schedule._read_document_text(row)
+    assert text is None
+    assert "scanned" in note
+
+
+def test_pasted_text_without_schedule_rows_returns_note(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client, admin, short_code="P12NOTE", type_code="FFP", template="FFP_INTERNAL", oh_pct=0
+    )
+    proposed = client.post(
+        f"/awards/{award['award_id']}/schedule/propose",
+        json={"text": "General contract narrative without a schedule date."},
+        headers=auth_header(admin),
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert "no dated deliverable lines found in the pasted text" in proposed.json()["notes"]
