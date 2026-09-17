@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -180,6 +181,173 @@ September 15, 2026
     ]
     assert all(row.origin_code == "extract" for row in rows)
     assert all(row.source_document_id == 12 for row in rows)
+
+
+def test_extract_cdrl_dac_eoc_and_recurring_schedule() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-01-01",
+        pop_end="2026-12-31",
+    )
+    text = """\
+Section F - Deliveries or Performance
+0001 Period of Performance
+From
+31 Aug 2026
+To
+30 Aug 2028
+1. DATA ITEM NO.
+A001
+2. TITLE OF DATA ITEM
+Program Management Plan
+10. FREQUENCY
+One time
+12. DATE OF FIRST SUBMISSION
+45 DAC
+16. REMARKS
+Blk 13: Updated quarterly after initial baseline.
+15.TOTAL
+1. DATA ITEM NO.
+A002
+2. TITLE OF DATA ITEM
+Progress Report
+10. FREQUENCY
+Monthly
+12. DATE OF FIRST SUBMISSION
+30 DAC
+16. REMARKS
+BLK 13: Monthly Reports shall be submitted NLT 15 days after the end of each month.
+15.TOTAL
+1. DATA ITEM NO.
+A003
+2. TITLE OF DATA ITEM
+Six Month Project Reviews
+10. FREQUENCY
+Every 6 months
+12. DATE OF FIRST SUBMISSION
+180 DAC
+16. REMARKS
+DAC: Days After Contract Award.
+15.TOTAL
+1. DATA ITEM NO.
+A005
+2. TITLE OF DATA ITEM
+Technical Data Package
+10. FREQUENCY
+ASREQ
+12. DATE OF FIRST SUBMISSION
+EOC
+16. REMARKS
+EOC: End of Contract
+15.TOTAL
+1. DATA ITEM NO.
+A007
+2. TITLE OF DATA ITEM
+Final Report
+10. FREQUENCY
+See BLK 16
+12. DATE OF FIRST SUBMISSION
+See BLK 16
+16. REMARKS
+The contractor shall deliver a draft NLT thirty (30) days before the end of the POP.
+The contractor shall deliver the final report NLT the end of the POP.
+15.TOTAL
+1. DATA ITEM NO.
+A008
+2. TITLE OF DATA ITEM
+Patents - Reporting of Subject Inventions
+10. FREQUENCY
+See BLK 16
+12. DATE OF FIRST SUBMISSION
+See BLK 16
+16. REMARKS
+Submit DD Form 882 every 12 months from the date of the contract award.
+Submit DD Form 882 in a final report during the contract term.
+15.TOTAL
+"""
+    assert contract_schedule.contract_pop_dates(text) == (
+        date(2026, 8, 31),
+        date(2028, 8, 30),
+    )
+
+    rows = contract_schedule.extract_cdrl_schedule(text, award, source_document_id=12)
+    by_title = {row.title: row for row in rows}
+
+    assert by_title["A001 Program Management Plan — Baseline"].due_date == "2026-10-15"
+    assert by_title["A001 Program Management Plan — Quarterly update 1"].due_date == "2027-01-15"
+    assert by_title["A002 Progress Report — Submission 1"].due_date == "2026-09-30"
+    assert by_title["A002 Progress Report — Submission 2"].due_date == "2026-10-15"
+    assert by_title["A002 Progress Report — Submission 24"].due_date == "2028-08-15"
+    assert by_title["A003 Six Month Project Reviews — Review 1"].due_date == "2027-02-27"
+    assert by_title["A005 Technical Data Package"].due_date == "2028-08-30"
+    assert by_title["A007 Final Report — Draft"].due_date == "2028-07-31"
+    assert by_title["A007 Final Report — Final"].due_date == "2028-08-30"
+    assert (
+        by_title["A008 Patents - Reporting of Subject Inventions — Annual 1"].due_date
+        == "2027-08-31"
+    )
+    assert (
+        by_title["A008 Patents - Reporting of Subject Inventions — Final"].due_date == "2028-08-30"
+    )
+    assert all(row.start_date is None for row in rows)
+    assert all("contract PoP 2026-08-31 to 2028-08-30" in row.notes for row in rows)
+
+
+def test_cdrl_proposal_replaces_generic_templates(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client, admin, short_code="P12CDRL", type_code="FFP", template="FFP_INTERNAL", oh_pct=0
+    )
+    award_id = award["award_id"]
+    created = client.post(
+        f"/awards/{award_id}/documents",
+        json={"kind_code": "contract", "title": "CDRL contract"},
+        headers=auth_header(admin),
+    )
+    document_id = created.json()["document_id"]
+    contract = b"""\
+Section F - Deliveries or Performance
+0001 Period of Performance
+From
+31 Aug 2026
+To
+30 Aug 2028
+1. DATA ITEM NO.
+A001
+2. TITLE OF DATA ITEM
+Program Management Plan
+10. FREQUENCY
+One time
+12. DATE OF FIRST SUBMISSION
+45 DAC
+16. REMARKS
+DAC: Days After Contract Award.
+15.TOTAL
+"""
+    uploaded = client.post(
+        f"/documents/{document_id}/file",
+        files={"file": ("contract.txt", contract, "text/plain")},
+        headers=auth_header(admin),
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    proposed = client.post(
+        f"/awards/{award_id}/schedule/propose",
+        json={"document_id": document_id},
+        headers=auth_header(admin),
+    )
+    assert proposed.status_code == 200, proposed.text
+    body = proposed.json()
+    assert [row["title"] for row in body["items"]] == [
+        "Contract period of performance",
+        "A001 Program Management Plan",
+    ]
+    assert body["items"][0]["start_date"] == "2026-08-31"
+    assert body["items"][0]["due_date"] == "2028-08-30"
+    assert body["items"][1]["start_date"] is None
+    assert body["items"][1]["due_date"] == "2026-10-15"
+    assert any("phase-template rows were replaced" in note for note in body["notes"])
+    assert any("differs from the award record" in note for note in body["notes"])
 
 
 def test_extract_from_docx_table(client: TestClient) -> None:

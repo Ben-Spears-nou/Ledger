@@ -191,8 +191,9 @@ export default function AwardSchedule({
         </div>
         <p className="muted">
           Text-based PDF, Word (.docx), text, and CSV files are parsed for
-          milestones. Scanned PDFs require pasted text. Legacy .doc files can
-          be stored, but must be converted to .docx or pasted below.
+          milestones. DD Form 1423 CDRLs resolve DAC, EOC, monthly, quarterly,
+          and PoP-relative dates. Scanned PDFs require pasted text. Legacy .doc
+          files can be stored, but must be converted to .docx or pasted below.
         </p>
         <label>Paste SOW / milestone text (optional)</label>
         <textarea

@@ -938,7 +938,9 @@ money. Alembic `0009_phase12_schedule_gantt`.
 - `schedule_item` CRUD. `POST .../schedule/propose` (draft only) and
   `.../confirm`. Template from PoP/phase; extract dated lines from
   pasted text or a `.txt`, `.csv`, `.docx`, or text-based `.pdf`
-  document file. Scanned PDF and legacy `.doc` content requires paste.
+  document file. Resolve DD Form 1423 DAC/EOC and recurring schedule
+  rules against the contract Section F PoP. Scanned PDF and legacy
+  `.doc` content requires paste.
 - `GET /gantt` and `GET /awards/{id}/gantt`: completed / remaining /
   behind. UI `/gantt` plus award page. Printable.
 - Remaining views unchanged. Employees 403 on schedule/Gantt writes and
@@ -951,7 +953,9 @@ money. Alembic `0009_phase12_schedule_gantt`.
   for an employee.
 - Propose does not insert rows. Confirm inserts; remaining cents
   unchanged. Extract from `.txt` and `.docx` contract files includes a
-  dated deliverable line; text-layer PDF parsing is covered.
+  dated deliverable line; text-layer PDF parsing is covered. CDRL
+  extraction resolves 30/180 DAC, EOC, monthly, quarterly, and
+  PoP-relative final-report dates without using clause effective dates.
 - Open item with `due_date` yesterday is `behind`; `done` is
   `completed`. Employee 403 on `/gantt`.
 - `python tasks.py lint` and `python tasks.py test` stay green, including

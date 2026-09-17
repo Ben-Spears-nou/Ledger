@@ -805,6 +805,13 @@ task (D22), and **not** a compliance obligation (D30). Status is `open` |
    text-based `.pdf` contract file (dated lines that look like
    deliverables). Scanned PDFs need OCR outside Ledger or pasted text.
 
+When a contract contains DD Form 1423 CDRLs, extraction reads the
+Section F PoP and resolves common schedule rules including DAC (days
+after contract award), EOC, monthly/quarterly intervals, and dates
+relative to the end of the PoP. Structured CDRL rows replace generic
+phase-template rows in that proposal. This does not silently modify the
+award header; a PoP mismatch is shown for operator review.
+
 The contract-schedule panel may upload `.pdf`, `.doc`, and `.docx`
 directly into the existing document register (D29). Legacy binary `.doc`
 files are stored but not parsed; convert them to `.docx` or paste the

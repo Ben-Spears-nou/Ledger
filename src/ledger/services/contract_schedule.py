@@ -44,6 +44,14 @@ _RELATIVE_MONTH = re.compile(
     r"(?:award|award start|start|kickoff))\b",
     re.IGNORECASE,
 )
+_CONTRACT_POP = re.compile(
+    r"Period\s+of\s+Performance\s+From\s+"
+    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})\s+To\s+"
+    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})",
+    re.IGNORECASE,
+)
+_CDRL_MARKER = re.compile(r"(?im)^\s*1\.\s*DATA ITEM NO\.\s*$")
+_DAC = re.compile(r"\b(\d+)\s*DAC\b", re.IGNORECASE)
 _MONTHS = {
     **{calendar.month_name[i].lower(): i for i in range(1, 13)},
     **{calendar.month_abbr[i].lower(): i for i in range(1, 13)},
@@ -265,6 +273,28 @@ def _add_months(value: date, months: int) -> date:
     return date(year, month, day)
 
 
+def _written_date(value: str) -> date | None:
+    match = re.fullmatch(
+        r"\s*(\d{1,2})\s+([A-Za-z]{3,9})\s+((?:19|20)\d{2})\s*",
+        value,
+    )
+    if match is None:
+        return None
+    return _us_date(match.group(2), match.group(1), match.group(3))
+
+
+def contract_pop_dates(text: str) -> tuple[date, date] | None:
+    """Read a Section F ``Period of Performance From ... To ...`` range."""
+    match = _CONTRACT_POP.search(text)
+    if match is None:
+        return None
+    start = _written_date(match.group(1))
+    end = _written_date(match.group(2))
+    if start is None or end is None or end < start:
+        return None
+    return start, end
+
+
 def _dates_in_line(line: str, award: Award) -> list[date]:
     """Recognize common absolute and award-relative contract dates."""
     dates: list[date] = []
@@ -302,6 +332,234 @@ def _dates_in_line(line: str, award: Award) -> list[date]:
     return dates
 
 
+def _cdrl_blocks(text: str) -> list[str]:
+    markers = list(_CDRL_MARKER.finditer(text))
+    return [
+        text[marker.start() : markers[index + 1].start() if index + 1 < len(markers) else None]
+        for index, marker in enumerate(markers)
+    ]
+
+
+def _field_after(block: str, heading: str) -> str | None:
+    lines = [line.strip() for line in block.splitlines()]
+    heading_upper = heading.upper()
+    for index, line in enumerate(lines):
+        if line.upper() != heading_upper:
+            continue
+        for value in lines[index + 1 :]:
+            if value:
+                return value
+    return None
+
+
+def _remarks(block: str) -> str:
+    match = re.search(r"(?im)^\s*16\.\s*REMARKS\s*$", block)
+    if match is None:
+        return ""
+    remarks = block[match.end() :]
+    stop = re.search(
+        r"(?im)^\s*(?:15\.TOTAL|17\.\s*PRICE GROUP|G\.\s*PREPARED BY)\b",
+        remarks,
+    )
+    return remarks[: stop.start() if stop else None]
+
+
+def _schedule_kind(title: str) -> str:
+    if re.search(r"\breport\b", title, re.IGNORECASE):
+        return "report"
+    if re.search(r"\breview\b|\bmeeting\b|\bteleconference\b", title, re.IGNORECASE):
+        return "milestone"
+    return "deliverable"
+
+
+def _monthly_dates(first: date, end: date, *, subsequent_day: int | None) -> list[date]:
+    dates = [first]
+    cursor = _add_months(first.replace(day=1), 1)
+    while cursor <= end:
+        day = subsequent_day or min(first.day, calendar.monthrange(cursor.year, cursor.month)[1])
+        due = cursor.replace(day=min(day, calendar.monthrange(cursor.year, cursor.month)[1]))
+        if due <= end:
+            dates.append(due)
+        cursor = _add_months(cursor, 1)
+    return dates
+
+
+def _interval_dates(first: date, end: date, months: int) -> list[date]:
+    dates: list[date] = []
+    due = first
+    while due <= end:
+        dates.append(due)
+        due = _add_months(due, months)
+    return dates
+
+
+def _cdrl_due_dates(
+    *,
+    title: str,
+    frequency: str,
+    first_submission: str,
+    remarks: str,
+    contract_start: date,
+    contract_end: date,
+) -> list[tuple[str, date, str]]:
+    """Resolve common DD 1423 DAC/EOC/frequency rules into dated rows."""
+    title_lower = title.lower()
+    frequency_lower = frequency.lower()
+    remarks_flat = " ".join(remarks.split())
+    first: date | None = None
+    first_rule = first_submission
+    dac = _DAC.search(first_submission)
+    if dac:
+        days = int(dac.group(1))
+        first = contract_start + timedelta(days=days)
+        first_rule = f"{days} DAC"
+    elif re.search(r"\bEOC\b|end of (?:the )?(?:contract|POP)\b", first_submission, re.IGNORECASE):
+        first = contract_end
+        first_rule = "EOC"
+    else:
+        absolute = _written_date(first_submission)
+        if absolute is not None:
+            first = absolute
+
+    if "final report" in title_lower:
+        before = re.search(
+            r"(?:\((\d+)\)|(\d+))\s+days?\s+before\s+(?:the\s+)?end\s+of\s+(?:the\s+)?POP",
+            remarks_flat,
+            re.IGNORECASE,
+        )
+        rows: list[tuple[str, date, str]] = []
+        if before:
+            days = int(before.group(1) or before.group(2))
+            rows.append(("Draft", contract_end - timedelta(days=days), f"{days} days before EOC"))
+        if re.search(r"final report.+?end of (?:the )?POP", remarks_flat, re.IGNORECASE):
+            rows.append(("Final", contract_end, "EOC"))
+        if rows:
+            return rows
+
+    if "reporting of subject inventions" in title_lower:
+        rows = []
+        due = _add_months(contract_start, 12)
+        sequence = 1
+        while due <= contract_end:
+            rows.append((f"Annual {sequence}", due, "every 12 months after award"))
+            sequence += 1
+            due = _add_months(due, 12)
+        if re.search(r"final report", remarks_flat, re.IGNORECASE):
+            rows.append(("Final", contract_end, "EOC"))
+        return rows
+
+    if first is None:
+        return []
+    if "monthly" in frequency_lower:
+        subsequent_day = (
+            15
+            if re.search(r"15 days after (?:the )?end of each month", remarks_flat, re.IGNORECASE)
+            else None
+        )
+        dates = _monthly_dates(first, contract_end, subsequent_day=subsequent_day)
+        return [
+            (f"Submission {index}", due, first_rule if index == 1 else "monthly")
+            for index, due in enumerate(dates, start=1)
+        ]
+    interval = re.search(r"every\s+(\d+)\s+months?", frequency, re.IGNORECASE)
+    if interval:
+        months = int(interval.group(1))
+        return [
+            (f"Review {index}", due, f"every {months} months")
+            for index, due in enumerate(
+                _interval_dates(first, contract_end, months),
+                start=1,
+            )
+        ]
+    if re.search(r"updated quarterly", remarks_flat, re.IGNORECASE):
+        return [
+            ("Baseline" if index == 1 else f"Quarterly update {index - 1}", due, first_rule)
+            for index, due in enumerate(_interval_dates(first, contract_end, 3), start=1)
+        ]
+    return [("", first, first_rule)]
+
+
+def extract_cdrl_schedule(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> list[ScheduleItemOut]:
+    """Extract DD Form 1423 rows, resolving DAC/EOC against contract PoP."""
+    blocks = _cdrl_blocks(text)
+    if not blocks:
+        return []
+    contract_pop = contract_pop_dates(text)
+    contract_start = contract_pop[0] if contract_pop else _parse_date(award.pop_start)
+    contract_end = (
+        contract_pop[1] if contract_pop else _parse_date(getattr(award, "pop_end", award.pop_start))
+    )
+    found: list[ScheduleItemOut] = []
+    seen_items: set[str] = set()
+    for block in blocks:
+        item_no = _field_after(block, "1. DATA ITEM NO.")
+        title = _field_after(block, "2. TITLE OF DATA ITEM")
+        if (
+            item_no is None
+            or title is None
+            or not re.fullmatch(r"[A-Z]\d{3}", item_no, re.IGNORECASE)
+            or item_no.upper() in seen_items
+        ):
+            continue
+        seen_items.add(item_no.upper())
+        frequency = _field_after(block, "10. FREQUENCY") or ""
+        first_submission = _field_after(block, "12. DATE OF FIRST SUBMISSION") or ""
+        for suffix, due, rule in _cdrl_due_dates(
+            title=title,
+            frequency=frequency,
+            first_submission=first_submission,
+            remarks=_remarks(block),
+            contract_start=contract_start,
+            contract_end=contract_end,
+        ):
+            row_title = f"{item_no.upper()} {title}"
+            if suffix:
+                row_title = f"{row_title} — {suffix}"
+            found.append(
+                _draft(
+                    award,
+                    kind_code=_schedule_kind(title),
+                    title=row_title,
+                    start=None,
+                    due=due,
+                    origin_code="extract",
+                    notes=(
+                        f"Resolved from DD Form 1423 ({rule}) using contract PoP "
+                        f"{contract_start.isoformat()} to {contract_end.isoformat()}."
+                    ),
+                    source_document_id=source_document_id,
+                )
+            )
+    return found
+
+
+def _contract_pop_draft(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> ScheduleItemOut | None:
+    contract_pop = contract_pop_dates(text)
+    if contract_pop is None:
+        return None
+    start, end = contract_pop
+    return _draft(
+        award,
+        kind_code="pop",
+        title="Contract period of performance",
+        start=start,
+        due=end,
+        origin_code="extract",
+        notes="Extracted from Section F of the contract.",
+        source_document_id=source_document_id,
+    )
+
+
 def extract_dated_lines(
     text: str,
     award: Award,
@@ -309,6 +567,13 @@ def extract_dated_lines(
     source_document_id: int | None,
 ) -> list[ScheduleItemOut]:
     """Heuristic dated deliverable/milestone lines from contract text."""
+    cdrl_rows = extract_cdrl_schedule(
+        text,
+        award,
+        source_document_id=source_document_id,
+    )
+    if cdrl_rows:
+        return cdrl_rows
     found: list[ScheduleItemOut] = []
     seen: set[tuple[str, str]] = set()
     lines = [" ".join(raw.split()) for raw in text.splitlines()]
@@ -346,7 +611,7 @@ def extract_dated_lines(
                 award,
                 kind_code=kind,
                 title=title,
-                start=_parse_date(award.pop_start),
+                start=dates[0] if len(dates) > 1 else None,
                 due=due,
                 origin_code="extract",
                 notes="Extracted from contract text; confirm before saving.",
@@ -411,18 +676,45 @@ def propose_schedule(
         if skip:
             notes.append(skip)
         elif text:
-            extracted = extract_dated_lines(text, award, source_document_id=source_id)
+            cdrl_rows = extract_cdrl_schedule(text, award, source_document_id=source_id)
+            if cdrl_rows:
+                pop_row = _contract_pop_draft(text, award, source_document_id=source_id)
+                items = ([pop_row] if pop_row else []) + cdrl_rows
+                notes.append(
+                    "Structured CDRL schedule found; phase-template rows were replaced "
+                    "with contract dates."
+                )
+                contract_pop = contract_pop_dates(text)
+                award_pop = (_parse_date(award.pop_start), _parse_date(award.pop_end))
+                if contract_pop is not None and contract_pop != award_pop:
+                    notes.append(
+                        "Contract PoP "
+                        f"{contract_pop[0].isoformat()} to {contract_pop[1].isoformat()} "
+                        "differs from the award record; review the award header."
+                    )
+                extracted = []
+            else:
+                extracted = extract_dated_lines(text, award, source_document_id=source_id)
             if extracted:
                 items.extend(extracted)
-            else:
+            elif not cdrl_rows:
                 notes.append("no dated deliverable lines found in the file")
     pasted = (payload.text or "").strip()
     if pasted:
-        extracted = extract_dated_lines(pasted, award, source_document_id=source_id)
-        if extracted:
-            items.extend(extracted)
+        cdrl_rows = extract_cdrl_schedule(pasted, award, source_document_id=source_id)
+        if cdrl_rows:
+            pop_row = _contract_pop_draft(pasted, award, source_document_id=source_id)
+            items = ([pop_row] if pop_row else []) + cdrl_rows
+            notes.append(
+                "Structured CDRL schedule found in pasted text; phase-template rows "
+                "were replaced with contract dates."
+            )
         else:
-            notes.append("no dated deliverable lines found in the pasted text")
+            extracted = extract_dated_lines(pasted, award, source_document_id=source_id)
+            if extracted:
+                items.extend(extracted)
+            else:
+                notes.append("no dated deliverable lines found in the pasted text")
     notes.append("Nothing is saved until you confirm the rows you want to keep.")
     return ScheduleProposeOut(award_id=award.award_id, notes=notes, items=items)
 
