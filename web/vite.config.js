@@ -38,6 +38,8 @@ export default defineConfig({
       "/glossary": API,
       "/gantt": { target: API, bypass: spaPage },
       "/schedule": API,
+      "/work-plan": API,
+      "/work-gantt": { target: API, bypass: spaPage },
       "/health": API,
     },
   },

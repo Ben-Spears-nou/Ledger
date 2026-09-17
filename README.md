@@ -76,5 +76,6 @@ Screens in `web/`: `/login`, `/home` (admin: this week’s decisions),
 `/staffing` (admin: plan vs capacity vs remaining),
 `/people` (admin: people, logins, role/active/reset password, base rates, capacity, assignments; Delete on each row),
 `/instruments` (admin: shared costs), `/compliance` (admin: due dates),
-`/gantt` (admin: contract schedule chart), `/help` (glossary),
+`/gantt` (admin: contract schedule chart),
+`/work-gantt` (admin: SOW work progress and percent complete), `/help` (glossary),
 `/alerts` (admin: 75% and PoP), `/audit` (admin: event log and charges CSV).

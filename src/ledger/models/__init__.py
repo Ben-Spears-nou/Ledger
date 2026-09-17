@@ -17,6 +17,7 @@ from ledger.models.contract_schedule import (
     GlossaryTerm,
     ScheduleItem,
     ScheduleKind,
+    WorkPlanItem,
 )
 from ledger.models.documents import (
     ComplianceItem,
@@ -91,4 +92,5 @@ __all__ = [
     "TimesheetLine",
     "TimesheetPeriod",
     "UserAccount",
+    "WorkPlanItem",
 ]

@@ -850,5 +850,26 @@ CREATE TABLE IF NOT EXISTS schedule_item (
 
 CREATE INDEX IF NOT EXISTS ix_schedule_item_award_due
     ON schedule_item (award_id, due_date);
+
+CREATE TABLE IF NOT EXISTS work_plan_item (
+    work_plan_item_id    INTEGER PRIMARY KEY,
+    award_id             INTEGER NOT NULL REFERENCES award (award_id),
+    requirement_code     TEXT,
+    title                TEXT NOT NULL,
+    start_date           TEXT NOT NULL,
+    due_date             TEXT NOT NULL,
+    percent_complete_bp  INTEGER NOT NULL DEFAULT 0
+                         CHECK (percent_complete_bp BETWEEN 0 AND 10000),
+    notes                TEXT,
+    source_document_id   INTEGER REFERENCES document (document_id),
+    origin_code          TEXT NOT NULL CHECK (origin_code IN ('extract', 'manual')),
+    sort_order           INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by           INTEGER REFERENCES user_account (user_account_id),
+    CHECK (due_date >= start_date)
+);
+
+CREATE INDEX IF NOT EXISTS ix_work_plan_item_award_order
+    ON work_plan_item (award_id, sort_order, work_plan_item_id);
 CREATE INDEX IF NOT EXISTS ix_glossary_alias_term
     ON glossary_alias (term_code);

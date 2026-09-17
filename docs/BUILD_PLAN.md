@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D45). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D49). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,7 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–12.** There is no Phase 13 in this plan.
+**This document specifies Phases 0–13.**
 
 ---
 
@@ -940,7 +940,9 @@ money. Alembic `0009_phase12_schedule_gantt`.
   pasted text or a `.txt`, `.csv`, `.docx`, or text-based `.pdf`
   document file. Resolve DD Form 1423 DAC/EOC and recurring schedule
   rules against the contract Section F PoP. Scanned PDF and legacy
-  `.doc` content requires paste.
+  `.doc` content requires paste. Infer contiguous start windows for
+  recurring CDRLs; undated starts remain point deliverables rather than
+  falling back to the award PoP.
 - `GET /gantt` and `GET /awards/{id}/gantt`: completed / remaining /
   behind. UI `/gantt` plus award page. Printable.
 - Remaining views unchanged. Employees 403 on schedule/Gantt writes and
@@ -956,10 +958,40 @@ money. Alembic `0009_phase12_schedule_gantt`.
   dated deliverable line; text-layer PDF parsing is covered. CDRL
   extraction resolves 30/180 DAC, EOC, monthly, quarterly, and
   PoP-relative final-report dates without using clause effective dates.
+  Recurring start dates chain from the contract PoP and prior due date.
 - Open item with `due_date` yesterday is `behind`; `done` is
   `completed`. Employee 403 on `/gantt`.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–11.
+
+---
+
+## Phase 13 — Editable schedule and SOW work-progress Gantt
+
+Operators can correct confirmed contract-schedule rows in place and
+maintain a separate percent-complete plan for technical SOW requirements
+(D49). Alembic `0010_phase13_work_plan`.
+
+**Tasks**
+
+- Add inline edit for confirmed `schedule_item` title, kind, start, and due.
+- Add `work_plan_item` with requirement code, title, start/due, ordering,
+  notes, source document, and `percent_complete_bp`.
+- Propose top-level numbered SOW requirements from the existing contract
+  document/pasted-text intake. Evenly inferred dates are editable before
+  confirmation.
+- Add work-plan CRUD and separate award/portfolio work-Gantt APIs.
+- Add award work-plan editor and printable `/work-gantt` with progress fill.
+
+**Acceptance criteria**
+
+- Alembic head is `0010_phase13_work_plan`; schema and ORM match.
+- Proposed SOW 4.1/4.2/4.3 rows are draft-only until confirmed.
+- Confirmed schedule and work-plan rows edit without delete/re-add.
+- `percent_complete_bp` validates 0–10000 and appears as Gantt fill.
+- A past-due row under 100% is behind; 100% is completed.
+- Employees receive 403 from work-plan and work-Gantt APIs.
+- `python tasks.py lint`, `python tasks.py test`, and UI build stay green.
 
 ---
 

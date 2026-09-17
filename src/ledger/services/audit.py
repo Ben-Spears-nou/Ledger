@@ -81,6 +81,10 @@ AUDIT_ACTIONS = (
     "week_approve",
     "week_return",
     "week_submit",
+    "work_plan_confirm",
+    "work_plan_create",
+    "work_plan_delete",
+    "work_plan_update",
 )
 
 AUDIT_ENTITY_TYPES = (
@@ -101,6 +105,7 @@ AUDIT_ENTITY_TYPES = (
     "task",
     "timesheet_period",
     "user_account",
+    "work_plan_item",
 )
 
 

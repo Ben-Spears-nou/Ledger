@@ -65,3 +65,27 @@ class ScheduleItem(Base):
     created_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("user_account.user_account_id")
     )
+
+
+class WorkPlanItem(Base):
+    """SOW requirement with operator-entered progress."""
+
+    __tablename__ = "work_plan_item"
+
+    work_plan_item_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    award_id: Mapped[int] = mapped_column(Integer, ForeignKey("award.award_id"), nullable=False)
+    requirement_code: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    start_date: Mapped[str] = mapped_column(Text, nullable=False)
+    due_date: Mapped[str] = mapped_column(Text, nullable=False)
+    percent_complete_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    source_document_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("document.document_id")
+    )
+    origin_code: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())
+    created_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_account.user_account_id")
+    )

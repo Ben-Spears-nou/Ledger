@@ -181,6 +181,13 @@ September 15, 2026
     ]
     assert all(row.origin_code == "extract" for row in rows)
     assert all(row.source_document_id == 12 for row in rows)
+    assert [row.start_date for row in rows] == [
+        "2026-06-15",
+        "2026-07-15",
+        "2026-08-31",
+        "2026-07-01",
+        "2026-09-15",
+    ]
 
 
 def test_extract_cdrl_dac_eoc_and_recurring_schedule() -> None:
@@ -264,6 +271,17 @@ See BLK 16
 Submit DD Form 882 every 12 months from the date of the contract award.
 Submit DD Form 882 in a final report during the contract term.
 15.TOTAL
+1. DATA ITEM NO.
+A009
+2. TITLE OF DATA ITEM
+One-Time Demonstration
+10. FREQUENCY
+One time
+12. DATE OF FIRST SUBMISSION
+15 Oct 2026
+16. REMARKS
+Point deliverable.
+15.TOTAL
 """
     assert contract_schedule.contract_pop_dates(text) == (
         date(2026, 8, 31),
@@ -274,23 +292,41 @@ Submit DD Form 882 in a final report during the contract term.
     by_title = {row.title: row for row in rows}
 
     assert by_title["A001 Program Management Plan — Baseline"].due_date == "2026-10-15"
+    assert by_title["A001 Program Management Plan — Baseline"].start_date == "2026-08-31"
     assert by_title["A001 Program Management Plan — Quarterly update 1"].due_date == "2027-01-15"
+    assert by_title["A001 Program Management Plan — Quarterly update 1"].start_date == "2026-10-15"
     assert by_title["A002 Progress Report — Submission 1"].due_date == "2026-09-30"
+    assert by_title["A002 Progress Report — Submission 1"].start_date == "2026-08-31"
     assert by_title["A002 Progress Report — Submission 2"].due_date == "2026-10-15"
+    assert by_title["A002 Progress Report — Submission 2"].start_date == "2026-09-30"
     assert by_title["A002 Progress Report — Submission 24"].due_date == "2028-08-15"
     assert by_title["A003 Six Month Project Reviews — Review 1"].due_date == "2027-02-27"
+    assert by_title["A003 Six Month Project Reviews — Review 1"].start_date == "2026-08-31"
     assert by_title["A005 Technical Data Package"].due_date == "2028-08-30"
+    assert by_title["A005 Technical Data Package"].start_date == "2028-08-30"
     assert by_title["A007 Final Report — Draft"].due_date == "2028-07-31"
+    assert by_title["A007 Final Report — Draft"].start_date == "2028-07-31"
     assert by_title["A007 Final Report — Final"].due_date == "2028-08-30"
+    assert by_title["A007 Final Report — Final"].start_date == "2028-07-31"
     assert (
         by_title["A008 Patents - Reporting of Subject Inventions — Annual 1"].due_date
         == "2027-08-31"
     )
     assert (
+        by_title["A008 Patents - Reporting of Subject Inventions — Annual 1"].start_date
+        == "2026-08-31"
+    )
+    assert (
         by_title["A008 Patents - Reporting of Subject Inventions — Final"].due_date == "2028-08-30"
     )
-    assert all(row.start_date is None for row in rows)
+    assert (
+        by_title["A008 Patents - Reporting of Subject Inventions — Final"].start_date
+        == "2027-08-31"
+    )
+    assert by_title["A009 One-Time Demonstration"].start_date == "2026-10-15"
+    assert by_title["A009 One-Time Demonstration"].due_date == "2026-10-15"
     assert all("contract PoP 2026-08-31 to 2028-08-30" in row.notes for row in rows)
+    assert all("Start inferred from" in row.notes for row in rows)
 
 
 def test_cdrl_proposal_replaces_generic_templates(client: TestClient) -> None:
@@ -344,7 +380,7 @@ DAC: Days After Contract Award.
     ]
     assert body["items"][0]["start_date"] == "2026-08-31"
     assert body["items"][0]["due_date"] == "2028-08-30"
-    assert body["items"][1]["start_date"] is None
+    assert body["items"][1]["start_date"] == "2026-08-31"
     assert body["items"][1]["due_date"] == "2026-10-15"
     assert any("phase-template rows were replaced" in note for note in body["notes"])
     assert any("differs from the award record" in note for note in body["notes"])

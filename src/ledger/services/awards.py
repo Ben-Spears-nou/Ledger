@@ -32,6 +32,7 @@ from ledger.models import (
     ScheduleItem,
     Task,
     TimesheetLine,
+    WorkPlanItem,
 )
 from ledger.models.lookups import AwardInstrument, AwardMechanism, AwardPhase
 from ledger.schemas.awards import (
@@ -723,6 +724,8 @@ def delete_award(session: Session, award: Award, *, actor_id: int | None) -> Non
 
     for row in session.scalars(select(ScheduleItem).where(ScheduleItem.award_id == award_id)):
         row.source_document_id = None
+    for row in session.scalars(select(WorkPlanItem).where(WorkPlanItem.award_id == award_id)):
+        row.source_document_id = None
     session.flush()
     for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
         row.document_id = None
@@ -737,6 +740,8 @@ def delete_award(session: Session, award: Award, *, actor_id: int | None) -> Non
         rmtree(docs_dir, ignore_errors=True)
 
     for row in session.scalars(select(ScheduleItem).where(ScheduleItem.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(WorkPlanItem).where(WorkPlanItem.award_id == award_id)):
         session.delete(row)
     for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
         session.delete(row)

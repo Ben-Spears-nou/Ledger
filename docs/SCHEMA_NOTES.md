@@ -191,3 +191,15 @@ deleted (not only cancelled). Award mods stay append-only.
 
 `origin_code` is `template`, `extract`, or `manual`. Status uses
 `compliance_status`. Remaining views unchanged.
+
+---
+
+## SOW work plan (Phase 13)
+
+| Table | Notes |
+|---|---|
+| `work_plan_item` | Numbered SOW requirement with editable start/due, order, notes, source document, and operator-maintained `percent_complete_bp` (D49) |
+
+`percent_complete_bp` is 0–10000. `origin_code` is `extract` or
+`manual`. Work-plan progress is separate from CDRL status, timesheet
+tasks, and remaining-money calculations.

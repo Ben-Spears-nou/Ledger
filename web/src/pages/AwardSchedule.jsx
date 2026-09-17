@@ -19,6 +19,8 @@ export default function AwardSchedule({
   const [paste, setPaste] = useState("");
   const [contractFile, setContractFile] = useState(null);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [editingId, setEditingId] = useState(null);
+  const [edit, setEdit] = useState(null);
   const [manual, setManual] = useState({
     kind_code: scheduleKinds[0]?.kind_code || "deliverable",
     title: "",
@@ -135,6 +137,38 @@ export default function AwardSchedule({
     }
   }
 
+  function beginEdit(row) {
+    setEditingId(row.schedule_item_id);
+    setEdit({
+      kind_code: row.kind_code,
+      title: row.title,
+      start_date: row.start_date || "",
+      due_date: row.due_date,
+      notes: row.notes || "",
+    });
+  }
+
+  async function saveEdit(event) {
+    event.preventDefault();
+    onError("");
+    onNotice("");
+    try {
+      await api(`/schedule/${editingId}`, {
+        method: "PATCH",
+        body: {
+          ...edit,
+          start_date: edit.start_date || "",
+        },
+      });
+      setEditingId(null);
+      setEdit(null);
+      onNotice("Schedule row updated.");
+      await onReload();
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+
   async function removeItem(itemId) {
     onError("");
     onNotice("");
@@ -192,8 +226,9 @@ export default function AwardSchedule({
         <p className="muted">
           Text-based PDF, Word (.docx), text, and CSV files are parsed for
           milestones. DD Form 1423 CDRLs resolve DAC, EOC, monthly, quarterly,
-          and PoP-relative dates. Scanned PDFs require pasted text. Legacy .doc
-          files can be stored, but must be converted to .docx or pasted below.
+          and PoP-relative dates; recurring start windows are inferred from the
+          contract PoP and prior due dates. Scanned PDFs require pasted text.
+          Legacy .doc files can be stored, but must be converted to .docx or pasted below.
         </p>
         <label>Paste SOW / milestone text (optional)</label>
         <textarea
@@ -345,42 +380,108 @@ export default function AwardSchedule({
           <tr>
             <th>Kind</th>
             <th>Title</th>
+            <th>Start</th>
             <th>Due</th>
             <th>Status</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {items.map((row) => (
-            <tr key={row.schedule_item_id}>
-              <td>{row.kind_code}</td>
-              <td>{row.title}</td>
-              <td>{row.due_date}</td>
-              <td>{row.status_code}</td>
-              <td className="actions">
-                {row.status_code === "open" ? (
-                  <button type="button" onClick={() => setStatus(row.schedule_item_id, "done")}>
-                    Done
-                  </button>
-                ) : (
+          {items.map((row) =>
+            editingId === row.schedule_item_id ? (
+              <tr key={row.schedule_item_id}>
+                <td>
+                  <select
+                    value={edit.kind_code}
+                    onChange={(event) =>
+                      setEdit((current) => ({ ...current, kind_code: event.target.value }))
+                    }
+                  >
+                    {kinds.map((kind) => (
+                      <option key={kind.kind_code} value={kind.kind_code}>
+                        {kind.kind_code}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <input
+                    value={edit.title}
+                    onChange={(event) =>
+                      setEdit((current) => ({ ...current, title: event.target.value }))
+                    }
+                    required
+                  />
+                </td>
+                <td>
+                  <input
+                    type="date"
+                    value={edit.start_date}
+                    onChange={(event) =>
+                      setEdit((current) => ({ ...current, start_date: event.target.value }))
+                    }
+                  />
+                </td>
+                <td>
+                  <input
+                    type="date"
+                    value={edit.due_date}
+                    onChange={(event) =>
+                      setEdit((current) => ({ ...current, due_date: event.target.value }))
+                    }
+                    required
+                  />
+                </td>
+                <td>{row.status_code}</td>
+                <td className="actions">
+                  <button type="button" onClick={saveEdit}>Save</button>
                   <button
                     type="button"
                     className="secondary"
-                    onClick={() => setStatus(row.schedule_item_id, "open")}
+                    onClick={() => {
+                      setEditingId(null);
+                      setEdit(null);
+                    }}
                   >
-                    Reopen
+                    Cancel
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => removeItem(row.schedule_item_id)}
-                >
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
+                </td>
+              </tr>
+            ) : (
+              <tr key={row.schedule_item_id}>
+                <td>{row.kind_code}</td>
+                <td>{row.title}</td>
+                <td>{row.start_date || "—"}</td>
+                <td>{row.due_date}</td>
+                <td>{row.status_code}</td>
+                <td className="actions">
+                  <button type="button" className="secondary" onClick={() => beginEdit(row)}>
+                    Edit
+                  </button>
+                  {row.status_code === "open" ? (
+                    <button type="button" onClick={() => setStatus(row.schedule_item_id, "done")}>
+                      Done
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setStatus(row.schedule_item_id, "open")}
+                    >
+                      Reopen
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => removeItem(row.schedule_item_id)}
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
       <GanttChart chart={chart} />

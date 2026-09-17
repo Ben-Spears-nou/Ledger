@@ -51,6 +51,11 @@ from ledger.api.routers.schedule import (
     tasks_router,
 )
 from ledger.api.routers.time import approvals_router, me_router, rates_router
+from ledger.api.routers.work_plan import (
+    award_work_plan_router,
+    work_gantt_router,
+    work_plan_router,
+)
 from ledger.api.spa import DEFAULT_WEB_DIST, install_spa
 from ledger.config import DEFAULT_SECRET_KEY, get_settings
 
@@ -115,6 +120,9 @@ def create_app(web_dist: Path | None = None) -> FastAPI:
     application.include_router(gantt_router)
     application.include_router(award_schedule_router)
     application.include_router(schedule_items_router)
+    application.include_router(award_work_plan_router)
+    application.include_router(work_plan_router)
+    application.include_router(work_gantt_router)
     application.include_router(me_router)
     application.include_router(approvals_router)
     application.include_router(audit.router)

@@ -811,6 +811,12 @@ after contract award), EOC, monthly/quarterly intervals, and dates
 relative to the end of the PoP. Structured CDRL rows replace generic
 phase-template rows in that proposal. This does not silently modify the
 award header; a PoP mismatch is shown for operator review.
+CDRL start dates are explicitly marked as inferred: the first recurring
+row begins at the contract PoP start, later recurring rows begin at the
+previous submission due date, final-report final begins at draft due,
+and EOC/ASREQ rows without a stated duration are point deliverables.
+Generic rows with only a due date are also points, not bars beginning at
+the award PoP start.
 
 The contract-schedule panel may upload `.pdf`, `.doc`, and `.docx`
 directly into the existing document register (D29). Legacy binary `.doc`
@@ -846,6 +852,27 @@ As-of today (ISO dates, no float):
 - **remaining** — `open` and `due_date >= as_of`
 - **behind** — `open` and `due_date < as_of`
 
-Bar start is `start_date` or the award `pop_start`. Bar end is `due_date`.
+Bar start is `start_date` or, for a point item, `due_date`. Bar end is `due_date`.
 The UI at `/gantt` (and the award page) is printable. Employees 403 on
 Gantt APIs. D18 unchanged.
+
+---
+
+## D49 — SOW work progress is separate from deliverables and time tasks
+
+`work_plan_item` represents a numbered technical requirement from the
+contract SOW. It is not a CDRL `schedule_item`, not a timesheet `task`,
+and does not affect remaining money. Operators may propose rows from
+numbered SOW headings, confirm selected rows, then edit requirement code,
+title, dates, order, notes, and percent complete.
+
+Percent complete is integer hundredths of a percent (D16): `5000` means
+50%. It is maintained by the operator, not inferred from timesheet hours.
+The separate `/work-gantt` chart shows the full planned bar with a
+percent-complete fill and completed / remaining / behind state. It is
+printable for monthly reports and presentations.
+
+Extracted requirement dates are explicitly a starter plan: top-level SOW
+headings (for example 4.1, 4.2) are spaced sequentially across the
+contract PoP and must be reviewed before confirmation. Confirmed rows
+remain editable; extraction never silently changes existing rows.

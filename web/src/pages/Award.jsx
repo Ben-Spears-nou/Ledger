@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import AwardSchedule from "./AwardSchedule.jsx";
+import AwardWorkPlan from "./AwardWorkPlan.jsx";
 import {
   api,
   centsToDollarInput,
@@ -143,6 +144,8 @@ export default function Award() {
   const [scheduleItems, setScheduleItems] = useState([]);
   const [scheduleChart, setScheduleChart] = useState(null);
   const [scheduleKinds, setScheduleKinds] = useState([]);
+  const [workPlanItems, setWorkPlanItems] = useState([]);
+  const [workPlanChart, setWorkPlanChart] = useState(null);
   const [documentKinds, setDocumentKinds] = useState([]);
   const [complianceKinds, setComplianceKinds] = useState([]);
   const [pipelineKinds, setPipelineKinds] = useState([]);
@@ -276,21 +279,34 @@ export default function Award() {
       setAssignForm((current) => ({ ...current, person_id: String(personList[0].person_id) }));
     }
     try {
-      const [documentList, complianceList, scheduleList, ganttData] = await Promise.all([
+      const [
+        documentList,
+        complianceList,
+        scheduleList,
+        ganttData,
+        workPlanList,
+        workGanttData,
+      ] = await Promise.all([
         api(`/awards/${id}/documents`),
         api(`/awards/${id}/compliance`),
         api(`/awards/${id}/schedule`),
         api(`/awards/${id}/gantt`, { query: { as_of: todayIso() } }),
+        api(`/awards/${id}/work-plan`),
+        api(`/awards/${id}/work-gantt`, { query: { as_of: todayIso() } }),
       ]);
       setDocuments(documentList);
       setCompliance(complianceList);
       setScheduleItems(scheduleList);
       setScheduleChart(ganttData);
+      setWorkPlanItems(workPlanList);
+      setWorkPlanChart(workGanttData);
     } catch (err) {
       setDocuments([]);
       setCompliance([]);
       setScheduleItems([]);
       setScheduleChart(null);
+      setWorkPlanItems([]);
+      setWorkPlanChart(null);
       throw err;
     }
     try {
@@ -2124,6 +2140,16 @@ export default function Award() {
         scheduleKinds={scheduleKinds}
         items={scheduleItems}
         chart={scheduleChart}
+        onReload={load}
+        onError={setError}
+        onNotice={setNotice}
+      />
+
+      <AwardWorkPlan
+        awardId={id}
+        documents={documents}
+        items={workPlanItems}
+        chart={workPlanChart}
         onReload={load}
         onError={setError}
         onNotice={setNotice}

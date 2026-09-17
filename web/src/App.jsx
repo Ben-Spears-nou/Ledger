@@ -17,6 +17,7 @@ import Password from "./pages/Password.jsx";
 import People from "./pages/People.jsx";
 import Portfolio from "./pages/Portfolio.jsx";
 import Staffing from "./pages/Staffing.jsx";
+import WorkGantt from "./pages/WorkGantt.jsx";
 
 function RequireAuth({ children }) {
   if (!getToken()) {
@@ -79,6 +80,7 @@ function Shell({ children }) {
           {isAdmin ? <NavLink to="/people">People</NavLink> : null}
           {isAdmin ? <NavLink to="/instruments">Instruments</NavLink> : null}
           {isAdmin ? <NavLink to="/gantt">Gantt</NavLink> : null}
+          {isAdmin ? <NavLink to="/work-gantt">Work Gantt</NavLink> : null}
           {isAdmin ? <NavLink to="/compliance">Compliance</NavLink> : null}
           {isAdmin ? <NavLink to="/alerts">Alerts</NavLink> : null}
           {isAdmin ? <NavLink to="/audit">Audit</NavLink> : null}
@@ -242,6 +244,16 @@ export default function App() {
           <RequireAdmin>
             <Shell>
               <Gantt />
+            </Shell>
+          </RequireAdmin>
+        }
+      />
+      <Route
+        path="/work-gantt"
+        element={
+          <RequireAdmin>
+            <Shell>
+              <WorkGantt />
             </Shell>
           </RequireAdmin>
         }

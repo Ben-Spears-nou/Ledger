@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import calendar
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from docx import Document as WordDocument
@@ -60,6 +62,15 @@ _MONTHS = {
 
 class ScheduleTrackError(ValueError):
     """Domain error for contract schedule."""
+
+
+@dataclass(frozen=True)
+class _CdrlTiming:
+    suffix: str
+    start: date
+    due: date
+    due_rule: str
+    start_rule: str
 
 
 def _iso_date(value: str, *, field: str) -> str:
@@ -393,6 +404,26 @@ def _interval_dates(first: date, end: date, months: int) -> list[date]:
     return dates
 
 
+def _series_timings(
+    dates: list[date],
+    *,
+    contract_start: date,
+    suffix: Callable[[int], str],
+    due_rule: Callable[[int], str],
+) -> list[_CdrlTiming]:
+    """Make contiguous inferred work windows from an ordered due-date series."""
+    return [
+        _CdrlTiming(
+            suffix=suffix(index),
+            start=contract_start if index == 1 else dates[index - 2],
+            due=due,
+            due_rule=due_rule(index),
+            start_rule="contract PoP start" if index == 1 else "previous submission due date",
+        )
+        for index, due in enumerate(dates, start=1)
+    ]
+
+
 def _cdrl_due_dates(
     *,
     title: str,
@@ -401,7 +432,7 @@ def _cdrl_due_dates(
     remarks: str,
     contract_start: date,
     contract_end: date,
-) -> list[tuple[str, date, str]]:
+) -> list[_CdrlTiming]:
     """Resolve common DD 1423 DAC/EOC/frequency rules into dated rows."""
     title_lower = title.lower()
     frequency_lower = frequency.lower()
@@ -427,25 +458,56 @@ def _cdrl_due_dates(
             remarks_flat,
             re.IGNORECASE,
         )
-        rows: list[tuple[str, date, str]] = []
+        rows: list[_CdrlTiming] = []
         if before:
             days = int(before.group(1) or before.group(2))
-            rows.append(("Draft", contract_end - timedelta(days=days), f"{days} days before EOC"))
+            draft_due = contract_end - timedelta(days=days)
+            rows.append(
+                _CdrlTiming(
+                    suffix="Draft",
+                    start=draft_due,
+                    due=draft_due,
+                    due_rule=f"{days} days before EOC",
+                    start_rule="point deliverable",
+                )
+            )
         if re.search(r"final report.+?end of (?:the )?POP", remarks_flat, re.IGNORECASE):
-            rows.append(("Final", contract_end, "EOC"))
+            rows.append(
+                _CdrlTiming(
+                    suffix="Final",
+                    start=rows[-1].due if rows else contract_end,
+                    due=contract_end,
+                    due_rule="EOC",
+                    start_rule="draft due date" if rows else "point deliverable",
+                )
+            )
         if rows:
             return rows
 
     if "reporting of subject inventions" in title_lower:
-        rows = []
+        dates: list[date] = []
         due = _add_months(contract_start, 12)
-        sequence = 1
         while due <= contract_end:
-            rows.append((f"Annual {sequence}", due, "every 12 months after award"))
-            sequence += 1
+            dates.append(due)
             due = _add_months(due, 12)
+        rows = _series_timings(
+            dates,
+            contract_start=contract_start,
+            suffix=lambda index: f"Annual {index}",
+            due_rule=lambda _index: "every 12 months after award",
+        )
         if re.search(r"final report", remarks_flat, re.IGNORECASE):
-            rows.append(("Final", contract_end, "EOC"))
+            rows.append(
+                _CdrlTiming(
+                    suffix="Final",
+                    start=rows[-1].due if rows else contract_start,
+                    due=contract_end,
+                    due_rule="EOC",
+                    start_rule=(
+                        "previous annual submission due date" if rows else "contract PoP start"
+                    ),
+                )
+            )
         return rows
 
     if first is None:
@@ -457,26 +519,38 @@ def _cdrl_due_dates(
             else None
         )
         dates = _monthly_dates(first, contract_end, subsequent_day=subsequent_day)
-        return [
-            (f"Submission {index}", due, first_rule if index == 1 else "monthly")
-            for index, due in enumerate(dates, start=1)
-        ]
+        return _series_timings(
+            dates,
+            contract_start=contract_start,
+            suffix=lambda index: f"Submission {index}",
+            due_rule=lambda index: first_rule if index == 1 else "monthly",
+        )
     interval = re.search(r"every\s+(\d+)\s+months?", frequency, re.IGNORECASE)
     if interval:
         months = int(interval.group(1))
-        return [
-            (f"Review {index}", due, f"every {months} months")
-            for index, due in enumerate(
-                _interval_dates(first, contract_end, months),
-                start=1,
-            )
-        ]
+        return _series_timings(
+            _interval_dates(first, contract_end, months),
+            contract_start=contract_start,
+            suffix=lambda index: f"Review {index}",
+            due_rule=lambda _index: f"every {months} months",
+        )
     if re.search(r"updated quarterly", remarks_flat, re.IGNORECASE):
-        return [
-            ("Baseline" if index == 1 else f"Quarterly update {index - 1}", due, first_rule)
-            for index, due in enumerate(_interval_dates(first, contract_end, 3), start=1)
-        ]
-    return [("", first, first_rule)]
+        return _series_timings(
+            _interval_dates(first, contract_end, 3),
+            contract_start=contract_start,
+            suffix=lambda index: "Baseline" if index == 1 else f"Quarterly update {index - 1}",
+            due_rule=lambda index: first_rule if index == 1 else "quarterly",
+        )
+    inferred_start = contract_start if dac else first
+    return [
+        _CdrlTiming(
+            suffix="",
+            start=inferred_start,
+            due=first,
+            due_rule=first_rule,
+            start_rule="contract PoP start" if dac else "point deliverable",
+        )
+    ]
 
 
 def extract_cdrl_schedule(
@@ -509,7 +583,7 @@ def extract_cdrl_schedule(
         seen_items.add(item_no.upper())
         frequency = _field_after(block, "10. FREQUENCY") or ""
         first_submission = _field_after(block, "12. DATE OF FIRST SUBMISSION") or ""
-        for suffix, due, rule in _cdrl_due_dates(
+        for timing in _cdrl_due_dates(
             title=title,
             frequency=frequency,
             first_submission=first_submission,
@@ -518,19 +592,20 @@ def extract_cdrl_schedule(
             contract_end=contract_end,
         ):
             row_title = f"{item_no.upper()} {title}"
-            if suffix:
-                row_title = f"{row_title} — {suffix}"
+            if timing.suffix:
+                row_title = f"{row_title} — {timing.suffix}"
             found.append(
                 _draft(
                     award,
                     kind_code=_schedule_kind(title),
                     title=row_title,
-                    start=None,
-                    due=due,
+                    start=timing.start,
+                    due=timing.due,
                     origin_code="extract",
                     notes=(
-                        f"Resolved from DD Form 1423 ({rule}) using contract PoP "
-                        f"{contract_start.isoformat()} to {contract_end.isoformat()}."
+                        f"Resolved from DD Form 1423 ({timing.due_rule}) using contract PoP "
+                        f"{contract_start.isoformat()} to {contract_end.isoformat()}. "
+                        f"Start inferred from {timing.start_rule}."
                     ),
                     source_document_id=source_document_id,
                 )
@@ -611,7 +686,7 @@ def extract_dated_lines(
                 award,
                 kind_code=kind,
                 title=title,
-                start=dates[0] if len(dates) > 1 else None,
+                start=dates[0] if len(dates) > 1 else due,
                 due=due,
                 origin_code="extract",
                 notes="Extracted from contract text; confirm before saving.",
@@ -914,7 +989,7 @@ def build_gantt(
         bar_start = (
             date.fromisoformat(row.start_date)
             if row.start_date
-            else date.fromisoformat(award.pop_start)
+            else date.fromisoformat(row.due_date)
         )
         bar_end = date.fromisoformat(row.due_date)
         bar_end = max(bar_end, bar_start)
@@ -933,7 +1008,7 @@ def build_gantt(
         bar_start = (
             date.fromisoformat(row.start_date)
             if row.start_date
-            else date.fromisoformat(award.pop_start)
+            else date.fromisoformat(row.due_date)
         )
         bar_end = date.fromisoformat(row.due_date)
         bar_end = max(bar_end, bar_start)

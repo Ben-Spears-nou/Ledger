@@ -250,6 +250,39 @@ header.app .header-search input {
   background: #8a1f1f;
 }
 
+.work-gantt-bar {
+  position: relative;
+  overflow: hidden;
+  background: #c7d3dc;
+}
+
+.work-gantt-bar.behind {
+  background: #d9bcbc;
+}
+
+.work-gantt-bar.completed {
+  background: #b8cbbf;
+}
+
+.work-gantt-progress {
+  display: block;
+  height: 100%;
+  background: #2f6f9f;
+  border-radius: 4px;
+}
+
+.work-gantt-bar.behind .work-gantt-progress {
+  background: #8a1f1f;
+}
+
+.work-gantt-bar.completed .work-gantt-progress {
+  background: #3d6b54;
+}
+
+.percent-input {
+  width: 5rem;
+}
+
 .gantt-lane.behind {
   color: #8a1f1f;
 }
