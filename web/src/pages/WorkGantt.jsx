@@ -1,60 +1,49 @@
 import { useEffect, useState } from "react";
 import { api, todayIso } from "../api.js";
-import { progressColor } from "../progress.js";
+import { MonthGantt } from "./MonthGantt.jsx";
 
-export function WorkGanttChart({ chart }) {
-  if (!chart || !chart.bars?.length) {
-    return <p className="muted">No confirmed work-plan rows yet.</p>;
-  }
+export function WorkGanttChart({ chart, title = "SOW work progress" }) {
   return (
-    <div className="gantt work-gantt">
-      <p className="muted">
-        {chart.chart_start} → {chart.chart_end} · as of {chart.as_of}
-      </p>
-      {chart.bars.map((bar) => (
-        <div className="gantt-row" key={bar.work_plan_item_id}>
-          <div className="gantt-label">
-            <strong>{bar.award_short_code}</strong>{" "}
-            {bar.requirement_code ? `${bar.requirement_code} ` : ""}
-            {bar.title}
-            <span className={`gantt-lane ${bar.lane}`}>
-              {(bar.percent_complete_bp / 100).toFixed(0)}%
-            </span>
-          </div>
-          <div className="gantt-track">
-            <div
-              className={`gantt-bar work-gantt-bar ${bar.lane}`}
-              style={{ marginLeft: `${bar.offset_pct}%`, width: `${bar.width_pct}%` }}
-              title={`${bar.start_date} – ${bar.due_date}; ${(
-                bar.percent_complete_bp / 100
-              ).toFixed(0)}% complete`}
-            >
-              <span
-                className="work-gantt-progress"
-                style={{
-                  width: `${bar.complete_width_pct}%`,
-                  background: progressColor(bar.percent_complete_bp),
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
+    <MonthGantt
+      chart={chart}
+      title={title}
+      empty="No confirmed work-plan rows yet."
+      rows={(chart?.bars || []).map((bar) => ({
+        key: bar.work_plan_item_id,
+        label: `${bar.award_short_code} ${
+          bar.requirement_code ? `${bar.requirement_code}: ` : ""
+        }${bar.title}`,
+        lane: bar.lane,
+        percentBp: bar.percent_complete_bp,
+        startDate: bar.start_date,
+        dueDate: bar.due_date,
+        tooltip: `${bar.start_date} – ${bar.due_date}; ${(
+          bar.percent_complete_bp / 100
+        ).toFixed(0)}% complete`,
+      }))}
+    />
   );
 }
 
 export default function WorkGantt() {
   const [chart, setChart] = useState(null);
+  const [awards, setAwards] = useState([]);
+  const [awardId, setAwardId] = useState("");
   const [error, setError] = useState("");
   const [asOf, setAsOf] = useState(todayIso());
 
-  async function load(nextAsOf = asOf) {
-    setChart(await api("/work-gantt", { query: { as_of: nextAsOf } }));
+  async function load(nextAsOf = asOf, nextAwardId = awardId) {
+    setChart(
+      await api("/work-gantt", {
+        query: { as_of: nextAsOf, award_id: nextAwardId || undefined },
+      }),
+    );
   }
 
   useEffect(() => {
-    load().catch((err) => setError(err.message));
+    Promise.all([load(), api("/awards", { query: { as: "picker" } })])
+      .then(([, awardList]) => setAwards(awardList))
+      .catch((err) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -68,6 +57,19 @@ export default function WorkGantt() {
     }
   }
 
+  async function selectAward(event) {
+    const nextAwardId = event.target.value;
+    setAwardId(nextAwardId);
+    setError("");
+    try {
+      await load(asOf, nextAwardId);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const selectedAward = awards.find((award) => String(award.award_id) === awardId);
+
   return (
     <>
       <h1>Work progress Gantt</h1>
@@ -78,6 +80,17 @@ export default function WorkGantt() {
       {error ? <p className="error">{error}</p> : null}
       <div className="card gantt-toolbar">
         <form onSubmit={apply} className="row">
+          <div>
+            <label>Award</label>
+            <select value={awardId} onChange={selectAward}>
+              <option value="">All awards</option>
+              {awards.map((award) => (
+                <option key={award.award_id} value={award.award_id}>
+                  {award.short_code}: {award.title}
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label>As of</label>
             <input type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} />
@@ -91,7 +104,14 @@ export default function WorkGantt() {
         </form>
       </div>
       <div className="card">
-        <WorkGanttChart chart={chart} />
+        <WorkGanttChart
+          chart={chart}
+          title={
+            selectedAward
+              ? `${selectedAward.short_code} — SOW work progress`
+              : "Portfolio SOW work progress"
+          }
+        />
       </div>
     </>
   );

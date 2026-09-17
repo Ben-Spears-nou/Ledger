@@ -202,73 +202,21 @@ header.app .header-search input {
   margin: 0.75rem 1.25rem 0;
 }
 
-.gantt-row {
-  margin-bottom: 0.55rem;
+.month-gantt {
+  overflow-x: auto;
 }
 
-.gantt-label {
-  font-size: 0.9rem;
-  margin-bottom: 0.15rem;
-}
-
-.gantt-lane {
-  margin-left: 0.5rem;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-}
-
-.gantt-track {
-  position: relative;
-  height: 0.85rem;
-  background: #e6e0d4;
-  border-radius: 4px;
-}
-
-.gantt-bar {
-  height: 100%;
-  border-radius: 4px;
-  min-width: 0.4rem;
-}
-
-.gantt-bar.completed {
-  background: #3d6b54;
-}
-
-.gantt-lane.completed {
-  color: #3d6b54;
-}
-
-.gantt-bar.remaining {
-  background: #2f6f9f;
-}
-
-.gantt-lane.remaining {
-  color: #2f6f9f;
-}
-
-.gantt-bar.behind {
-  background: #8a1f1f;
-}
-
-.work-gantt-bar {
-  position: relative;
-  overflow: hidden;
-  background: #c7d3dc;
-}
-
-.work-gantt-bar.behind {
-  background: #d9bcbc;
-}
-
-.work-gantt-bar.completed {
-  background: #b8cbbf;
-}
-
-.work-gantt-progress {
+.mg-image {
   display: block;
-  height: 100%;
-  background: #2f6f9f;
-  border-radius: 4px;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #d8d2c6;
+  background: #fff;
+}
+
+.mg-actions {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
 }
 
 .percent-input {
@@ -308,21 +256,15 @@ header.app .header-search input {
   cursor: default;
 }
 
-.gantt-lane.behind {
-  color: #8a1f1f;
-}
-
 @media print {
   header.app,
   .gantt-toolbar form button,
   .header-search,
+  .mg-actions,
   .order-arrows {
     display: none;
   }
 
-  .gantt-track,
-  .work-gantt-bar,
-  .work-gantt-progress,
   .percent-meter,
   .percent-meter span {
     -webkit-print-color-adjust: exact;
