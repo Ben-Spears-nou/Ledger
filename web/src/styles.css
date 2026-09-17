@@ -271,16 +271,41 @@ header.app .header-search input {
   border-radius: 4px;
 }
 
-.work-gantt-bar.behind .work-gantt-progress {
-  background: #8a1f1f;
-}
-
-.work-gantt-bar.completed .work-gantt-progress {
-  background: #3d6b54;
-}
-
 .percent-input {
   width: 5rem;
+}
+
+.percent-meter {
+  width: 4rem;
+  height: 0.5rem;
+  background: #e6e0d4;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.percent-meter span {
+  display: block;
+  height: 100%;
+}
+
+.order-arrows {
+  display: flex;
+  gap: 0.2rem;
+  margin-top: 0.15rem;
+}
+
+.order-arrow {
+  padding: 0 0.3rem;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  background: none;
+  border: 1px solid #c9c1b2;
+  color: #4a4438;
+}
+
+.order-arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .gantt-lane.behind {
@@ -290,8 +315,18 @@ header.app .header-search input {
 @media print {
   header.app,
   .gantt-toolbar form button,
-  .header-search {
+  .header-search,
+  .order-arrows {
     display: none;
+  }
+
+  .gantt-track,
+  .work-gantt-bar,
+  .work-gantt-progress,
+  .percent-meter,
+  .percent-meter span {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }
 

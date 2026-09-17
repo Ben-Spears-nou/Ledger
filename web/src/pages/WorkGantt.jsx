@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, todayIso } from "../api.js";
+import { progressColor } from "../progress.js";
 
 export function WorkGanttChart({ chart }) {
   if (!chart || !chart.bars?.length) {
@@ -30,7 +31,10 @@ export function WorkGanttChart({ chart }) {
             >
               <span
                 className="work-gantt-progress"
-                style={{ width: `${bar.complete_width_pct}%` }}
+                style={{
+                  width: `${bar.complete_width_pct}%`,
+                  background: progressColor(bar.percent_complete_bp),
+                }}
               />
             </div>
           </div>

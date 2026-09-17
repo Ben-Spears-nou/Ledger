@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ledger.models import Award, Document, WorkPlanItem
@@ -15,6 +15,7 @@ from ledger.schemas.work_plan import (
     WorkPlanConfirmIn,
     WorkPlanDraftIn,
     WorkPlanItemOut,
+    WorkPlanMoveIn,
     WorkPlanPatch,
     WorkPlanProposeIn,
     WorkPlanProposeOut,
@@ -58,6 +59,21 @@ def serialize_item(row: WorkPlanItem) -> WorkPlanItemOut:
         sort_order=row.sort_order,
         created_at=row.created_at,
     )
+
+
+def _next_sort_order(session: Session, award_id: int) -> int:
+    """Place a new row after the last displayed requirement."""
+    current = session.scalar(
+        select(func.max(WorkPlanItem.sort_order)).where(WorkPlanItem.award_id == award_id)
+    )
+    return (current or 0) + 1
+
+
+def _renormalize(session: Session, award_id: int) -> None:
+    """Keep sort_order as 1..n in current display order."""
+    for index, row in enumerate(list_items(session, award_id), start=1):
+        row.sort_order = index
+    session.flush()
 
 
 def list_items(session: Session, award_id: int) -> list[WorkPlanItem]:
@@ -182,7 +198,9 @@ def _insert(
         notes=draft.notes,
         source_document_id=source_id,
         origin_code=draft.origin_code if draft.origin_code in {"extract", "manual"} else "manual",
-        sort_order=draft.sort_order,
+        sort_order=(
+            draft.sort_order if draft.sort_order > 0 else _next_sort_order(session, award.award_id)
+        ),
         created_by=actor_id,
     )
     session.add(row)
@@ -268,6 +286,35 @@ def patch_item(
         actor_user_id=actor_id,
         detail={"percent_complete_bp": row.percent_complete_bp},
     )
+    return row
+
+
+def move_item(
+    session: Session,
+    row: WorkPlanItem,
+    payload: WorkPlanMoveIn,
+    *,
+    actor_id: int | None,
+) -> WorkPlanItem:
+    """Swap a row with its neighbor in the list and Gantt stack. Dates stay put."""
+    rows = list_items(session, row.award_id)
+    index = next(
+        i for i, item in enumerate(rows) if item.work_plan_item_id == row.work_plan_item_id
+    )
+    neighbor_index = index - 1 if payload.direction == "up" else index + 1
+    if 0 <= neighbor_index < len(rows):
+        neighbor = rows[neighbor_index]
+        row.sort_order, neighbor.sort_order = neighbor.sort_order, row.sort_order
+        session.flush()
+        _renormalize(session, row.award_id)
+        record_event(
+            session,
+            action="work_plan_move",
+            entity_type="work_plan_item",
+            entity_id=row.work_plan_item_id,
+            actor_user_id=actor_id,
+            detail={"direction": payload.direction},
+        )
     return row
 
 

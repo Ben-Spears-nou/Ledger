@@ -84,6 +84,7 @@ AUDIT_ACTIONS = (
     "work_plan_confirm",
     "work_plan_create",
     "work_plan_delete",
+    "work_plan_move",
     "work_plan_update",
 )
 

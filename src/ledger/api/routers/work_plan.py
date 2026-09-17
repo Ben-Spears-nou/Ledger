@@ -14,6 +14,7 @@ from ledger.schemas.work_plan import (
     WorkPlanConfirmIn,
     WorkPlanDraftIn,
     WorkPlanItemOut,
+    WorkPlanMoveIn,
     WorkPlanPatch,
     WorkPlanProposeIn,
     WorkPlanProposeOut,
@@ -26,6 +27,7 @@ from ledger.services.work_plan import (
     create_item,
     delete_item,
     list_items,
+    move_item,
     patch_item,
     propose,
     serialize_item,
@@ -136,6 +138,20 @@ def patch_work_plan_item(
         return serialize_item(patch_item(session, row, payload, actor_id=admin.user_account_id))
     except WorkPlanError as exc:
         raise _http(exc) from exc
+
+
+@work_plan_router.post("/{item_id}/move", response_model=WorkPlanItemOut)
+def post_work_plan_move(
+    item_id: int,
+    payload: WorkPlanMoveIn,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WorkPlanItemOut:
+    """Move a requirement one place up or down. Dates are unchanged."""
+    row = session.get(WorkPlanItem, item_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "work-plan item not found")
+    return serialize_item(move_item(session, row, payload, actor_id=admin.user_account_id))
 
 
 @work_plan_router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

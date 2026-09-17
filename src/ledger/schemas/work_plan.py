@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -57,6 +59,12 @@ class WorkPlanConfirmIn(BaseModel):
     """Rows selected for insertion."""
 
     items: list[WorkPlanDraftIn]
+
+
+class WorkPlanMoveIn(BaseModel):
+    """Move a row one place in presentation order."""
+
+    direction: Literal["up", "down"]
 
 
 class WorkPlanPatch(BaseModel):

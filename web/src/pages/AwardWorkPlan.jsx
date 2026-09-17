@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, todayIso } from "../api.js";
+import { progressColor } from "../progress.js";
 import { WorkGanttChart } from "./WorkGantt.jsx";
 
 const emptyManual = {
@@ -123,6 +124,20 @@ export default function AwardWorkPlan({
     }
   }
 
+  async function move(itemId, direction) {
+    onError("");
+    onNotice("");
+    try {
+      await api(`/work-plan/${itemId}/move`, {
+        method: "POST",
+        body: { direction },
+      });
+      await onReload();
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+
   async function remove(itemId) {
     onError("");
     onNotice("");
@@ -140,7 +155,9 @@ export default function AwardWorkPlan({
       <h2>SOW work plan</h2>
       <p className="muted">
         Track technical requirements separately from contract deliverables and
-        timesheet tasks. Maintain percent complete for the presentation-ready{" "}
+        timesheet tasks. New rows append at the bottom. Use Up/Down to reorder
+        the list and Gantt stack without changing dates. Maintain percent complete
+        for the presentation-ready{" "}
         <Link to="/work-gantt">work progress Gantt</Link>.
       </p>
       <form onSubmit={propose}>
@@ -323,7 +340,7 @@ export default function AwardWorkPlan({
           </tr>
         </thead>
         <tbody>
-          {items.map((row) =>
+          {items.map((row, index) =>
             editingId === row.work_plan_item_id ? (
               <tr key={row.work_plan_item_id}>
                 <td>
@@ -389,11 +406,48 @@ export default function AwardWorkPlan({
               </tr>
             ) : (
               <tr key={row.work_plan_item_id}>
-                <td>{row.requirement_code || "—"}</td>
+                <td>
+                  <div>{row.requirement_code || "—"}</div>
+                  <div className="order-arrows">
+                    <button
+                      type="button"
+                      className="order-arrow"
+                      aria-label="Move up"
+                      title="Move up"
+                      disabled={index === 0}
+                      onClick={() => move(row.work_plan_item_id, "up")}
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className="order-arrow"
+                      aria-label="Move down"
+                      title="Move down"
+                      disabled={index === items.length - 1}
+                      onClick={() => move(row.work_plan_item_id, "down")}
+                    >
+                      ▼
+                    </button>
+                  </div>
+                </td>
                 <td>{row.title}</td>
                 <td>{row.start_date}</td>
                 <td>{row.due_date}</td>
-                <td>{(row.percent_complete_bp / 100).toFixed(0)}%</td>
+                <td>
+                  <div
+                    className="percent-meter"
+                    title={`${(row.percent_complete_bp / 100).toFixed(0)}% complete`}
+                  >
+                    <span
+                      style={{
+                        width: `${row.percent_complete_bp / 100}%`,
+                        background: progressColor(row.percent_complete_bp),
+                      }}
+                    />
+                  </div>
+                  <small>{(row.percent_complete_bp / 100).toFixed(0)}%</small>
+                </td>
                 <td className="actions">
                   <button type="button" className="secondary" onClick={() => beginEdit(row)}>
                     Edit

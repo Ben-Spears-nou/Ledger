@@ -188,3 +188,79 @@ def test_unused_award_delete_cleans_document_linked_work_plan(client: TestClient
     deleted = client.delete(f"/awards/{award_id}", headers=headers)
     assert deleted.status_code == 204, deleted.text
     assert client.get(f"/awards/{award_id}", headers=headers).status_code == 404
+
+
+def test_manual_work_plan_row_appends_and_moves(client: TestClient) -> None:
+    admin = login(client)
+    headers = auth_header(admin)
+    award = _award(
+        client,
+        admin,
+        short_code="P13ORDER",
+        type_code="FFP",
+        template="FFP_INTERNAL",
+        oh_pct=0,
+    )
+    award_id = award["award_id"]
+    proposed = client.post(
+        f"/awards/{award_id}/work-plan/propose",
+        json={"text": SOW},
+        headers=headers,
+    )
+    assert proposed.status_code == 200, proposed.text
+    confirmed = client.post(
+        f"/awards/{award_id}/work-plan/confirm",
+        json={"items": proposed.json()["items"]},
+        headers=headers,
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    first_id = confirmed.json()[0]["work_plan_item_id"]
+    last_extracted_id = confirmed.json()[-1]["work_plan_item_id"]
+    first_start = confirmed.json()[0]["start_date"]
+    first_due = confirmed.json()[0]["due_date"]
+
+    added = client.post(
+        f"/awards/{award_id}/work-plan",
+        json={
+            "requirement_code": "4.11",
+            "title": "Monthly reporting",
+            "start_date": "2026-09-01",
+            "due_date": "2028-08-30",
+            "origin_code": "manual",
+        },
+        headers=headers,
+    )
+    assert added.status_code == 201, added.text
+    manual_id = added.json()["work_plan_item_id"]
+
+    listed = client.get(f"/awards/{award_id}/work-plan", headers=headers).json()
+    assert [row["requirement_code"] for row in listed] == ["4.1", "4.2", "4.3", "4.11"]
+    assert listed[-1]["work_plan_item_id"] == manual_id
+
+    chart = client.get(f"/awards/{award_id}/work-gantt", headers=headers).json()
+    assert [row["requirement_code"] for row in chart["bars"]] == ["4.1", "4.2", "4.3", "4.11"]
+
+    down_on_last = client.post(
+        f"/work-plan/{manual_id}/move",
+        json={"direction": "down"},
+        headers=headers,
+    )
+    assert down_on_last.status_code == 200, down_on_last.text
+    still_last = client.get(f"/awards/{award_id}/work-plan", headers=headers).json()
+    assert still_last[-1]["work_plan_item_id"] == manual_id
+
+    moved = client.post(
+        f"/work-plan/{first_id}/move",
+        json={"direction": "down"},
+        headers=headers,
+    )
+    assert moved.status_code == 200, moved.text
+    reordered = client.get(f"/awards/{award_id}/work-plan", headers=headers).json()
+    assert [row["requirement_code"] for row in reordered] == ["4.2", "4.1", "4.3", "4.11"]
+    first_row = next(row for row in reordered if row["work_plan_item_id"] == first_id)
+    assert first_row["start_date"] == first_start
+    assert first_row["due_date"] == first_due
+
+    chart = client.get(f"/awards/{award_id}/work-gantt", headers=headers).json()
+    assert [row["requirement_code"] for row in chart["bars"]] == ["4.2", "4.1", "4.3", "4.11"]
+    assert last_extracted_id == reordered[2]["work_plan_item_id"]
