@@ -1109,7 +1109,7 @@ export default function People() {
               <input
                 type="number"
                 min="0"
-                step="0.25"
+                step="0.5"
                 value={capacityForm.hours_per_week}
                 onChange={(event) =>
                   setCapacityForm((current) => ({ ...current, hours_per_week: event.target.value }))
@@ -1208,8 +1208,8 @@ export default function People() {
               <label>Hours / week</label>
               <input
                 type="number"
-                min="0.01"
-                step="0.25"
+                min="0.5"
+                step="0.5"
                 value={assignForm.hours_per_week}
                 onChange={(event) =>
                   setAssignForm((current) => ({ ...current, hours_per_week: event.target.value }))

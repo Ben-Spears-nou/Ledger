@@ -1890,8 +1890,8 @@ export default function Award() {
               <label>Hours / week</label>
               <input
                 type="number"
-                min="0.01"
-                step="0.25"
+                min="0.5"
+                step="0.5"
                 value={assignForm.hours_per_week}
                 onChange={(event) =>
                   setAssignForm((current) => ({ ...current, hours_per_week: event.target.value }))
