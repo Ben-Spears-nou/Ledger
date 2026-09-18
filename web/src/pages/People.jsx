@@ -65,6 +65,8 @@ export default function People() {
     term_date: "",
     labor_category: "",
   });
+  const [factsOpen, setFactsOpen] = useState(false);
+  const [scrollToFacts, setScrollToFacts] = useState(false);
 
   async function load(start) {
     const monday = mondayOnOrBefore(start);
@@ -137,6 +139,16 @@ export default function People() {
     load(weekStart).catch((err) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!scrollToFacts) {
+      return;
+    }
+    document
+      .getElementById("person-facts")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setScrollToFacts(false);
+  }, [scrollToFacts]);
 
   function openRate(personId) {
     const rates = ratesByPerson[personId] || [];
@@ -327,6 +339,12 @@ export default function People() {
     });
   }
 
+  function editPerson(person) {
+    fillFacts(person);
+    setFactsOpen(true);
+    setScrollToFacts(true);
+  }
+
   async function saveFacts(event) {
     event.preventDefault();
     setError("");
@@ -451,11 +469,16 @@ export default function People() {
     <>
       <h1>People</h1>
       <p className="muted">
-        Delete is on each row. End stops a real assignment. If Delete fails, that row already
-        posted or is still in use — deactivate or add a new dated row instead.
+        Edit on a roster row opens that person in Person facts. Delete is on each row. End stops a
+        real assignment. If Delete fails, that row already posted or is still in use — deactivate
+        or add a new dated row instead.
       </p>
-      {error ? <p className="error">{error}</p> : null}
-      {notice ? <p>{notice}</p> : null}
+      {error || notice ? (
+        <div className="page-status">
+          {error ? <p className="error">{error}</p> : null}
+          {notice ? <p>{notice}</p> : null}
+        </div>
+      ) : null}
 
       <CollapsibleSection title="New person">
         <form onSubmit={addPerson}>
@@ -665,7 +688,7 @@ export default function People() {
                     ) : null}
                   </td>
                   <td className="actions">
-                    <button type="button" className="secondary" onClick={() => fillFacts(person)}>
+                    <button type="button" className="secondary" onClick={() => editPerson(person)}>
                       Edit
                     </button>
                     {rate ? (
@@ -731,7 +754,12 @@ export default function People() {
         {assignments.length === 0 ? <p className="muted">No assignments yet.</p> : null}
       </CollapsibleSection>
 
-      <CollapsibleSection title="Person facts">
+      <CollapsibleSection
+        id="person-facts"
+        title="Person facts"
+        open={factsOpen}
+        onOpenChange={setFactsOpen}
+      >
         <p className="muted">Correct name, email, hire/term, or labor category. Unused people can be deleted.</p>
         {people.length ? (
           <form onSubmit={saveFacts}>

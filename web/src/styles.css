@@ -235,6 +235,31 @@ button:disabled {
   color: #8a1f1f;
 }
 
+/* Keeps save and delete feedback on screen when acting deep inside a long page. */
+.page-status {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin-bottom: 0.9rem;
+}
+
+.page-status p {
+  margin: 0 0 0.4rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #b9c9bd;
+  border-radius: 6px;
+  background: #eaf2ec;
+}
+
+.page-status p:last-child {
+  margin-bottom: 0;
+}
+
+.page-status p.error {
+  border-color: #dcb4b4;
+  background: #fbeded;
+}
+
 .muted {
   color: #5c584f;
   font-size: 0.9rem;
@@ -386,6 +411,10 @@ ol.steps .current {
 
   .app-main {
     margin-left: 0;
+  }
+
+  .page-status {
+    position: static;
   }
 
   .percent-meter,
