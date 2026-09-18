@@ -115,6 +115,7 @@ function modFromAward(detail) {
     description: "",
     awarded_dollars: centsToDollarInput(detail.awarded_cost_cents),
     funded_dollars: centsToDollarInput(detail.funded_amount_cents),
+    fee_pct: pctToInput(detail.fee_pct ?? 0),
     fee_pot_dollars: centsToDollarInput(detail.fee_pot_cents),
     pop_start: detail.pop_start || "",
     pop_end: detail.pop_end || "",
@@ -235,6 +236,7 @@ export default function Award() {
     description: "",
     awarded_dollars: "",
     funded_dollars: "",
+    fee_pct: "",
     fee_pot_dollars: "",
     pop_start: "",
     pop_end: "",
@@ -505,6 +507,8 @@ export default function Award() {
         description: modForm.description || null,
         awarded_cost_cents: parseDollarsToCents(modForm.awarded_dollars),
         funded_amount_cents: parseDollarsToCents(modForm.funded_dollars),
+        fee_pct:
+          award?.type_code === "FFP" ? (parsePctToHundredths(modForm.fee_pct) ?? 0) : null,
         pop_start: modForm.pop_start || null,
         pop_end: modForm.pop_end || null,
         funded_through: modForm.funded_through || null,
@@ -519,6 +523,21 @@ export default function Award() {
       }
       await api(`/awards/${id}/mods`, { method: "POST", body });
       setNotice("Modification saved.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function submitBillingPeriod(periodId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/awards/${id}/billing-periods/${periodId}/submit`, {
+        method: "POST",
+        body: { submitted_at: todayIso() },
+      });
+      setNotice("FFP invoice marked submitted.");
       await load();
     } catch (err) {
       setError(err.message);
@@ -927,6 +946,9 @@ export default function Award() {
   }
 
   const remaining = award.remaining || {};
+  const modFundedCents = parseDollarsToCents(modForm.funded_dollars) ?? 0;
+  const modFeePct = parsePctToHundredths(modForm.fee_pct) ?? 0;
+  const modFfpFeeCents = Math.floor((modFundedCents * modFeePct + 5000) / 10000);
 
   return (
     <>
@@ -969,12 +991,65 @@ export default function Award() {
               <td>{formatCents(remaining.pipeline_cents)}</td>
             </tr>
             <tr>
-              <th>Fee pot</th>
+              <th>{award.type_code === "FFP" ? "Calculated fee / profit" : "Fee pot"}</th>
               <td>{formatCents(award.fee_pot_cents)}</td>
             </tr>
+            {award.type_code === "FFP" ? (
+              <tr>
+                <th>Fee / profit % of funded</th>
+                <td>{(award.fee_pct / 100).toFixed(2)}%</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
+      {award.type_code === "FFP" ? (
+        <div className="card">
+          <h2>FFP monthly billing</h2>
+          <p className="muted">
+            Funded contract value is spread across working months anchored to the PoP start.
+            Submitted periods stay fixed when a modification changes funding or extends the PoP.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Period</th>
+                <th>Scheduled</th>
+                <th>Submitted</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(award.billing_periods || []).map((row) => (
+                <tr key={row.billing_period_id}>
+                  <td>M{row.period_number}</td>
+                  <td>
+                    {row.period_start} – {row.period_end}
+                  </td>
+                  <td>{formatCents(row.scheduled_cents)}</td>
+                  <td>
+                    {row.submitted_at
+                      ? `${formatCents(row.submitted_cents)} on ${row.submitted_at}`
+                      : "Pending"}
+                  </td>
+                  <td>
+                    {!row.submitted_at ? (
+                      <button
+                        type="button"
+                        className="small"
+                        onClick={() => submitBillingPeriod(row.billing_period_id)}
+                      >
+                        Mark submitted
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
       <div className="card">
         <h2>Award header</h2>
         <p className="muted">
@@ -1332,9 +1407,13 @@ export default function Award() {
             Current: {award.current_policy.cost_basis_code} · fringe{" "}
             {pctToInput(award.current_policy.fringe_pct)}% · OH{" "}
             {pctToInput(award.current_policy.oh_pct)}% · G&A{" "}
-            {pctToInput(award.current_policy.ga_pct)}% · fee{" "}
-            {pctToInput(award.current_policy.fee_pct)}%
-            {award.current_policy.fee_in_burden ? " (fee in burden)" : ""} · from{" "}
+            {pctToInput(award.current_policy.ga_pct)}%
+            {award.type_code !== "CPFF" && award.type_code !== "FFP"
+              ? ` · fee ${pctToInput(award.current_policy.fee_pct)}%${
+                  award.current_policy.fee_in_burden ? " (fee in burden)" : ""
+                }`
+              : ""}{" "}
+            · from{" "}
             {award.current_policy.effective_from}{" "}
             <button type="button" className="secondary" onClick={deletePolicy}>
               Delete unused revision
@@ -1410,18 +1489,20 @@ export default function Award() {
                 }
               />
             </div>
-            <div>
-              <label>Fee %</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={policyForm.fee_pct}
-                onChange={(event) =>
-                  setPolicyForm((current) => ({ ...current, fee_pct: event.target.value }))
-                }
-              />
-            </div>
+            {award.type_code !== "CPFF" && award.type_code !== "FFP" ? (
+              <div>
+                <label>Fee %</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={policyForm.fee_pct}
+                  onChange={(event) =>
+                    setPolicyForm((current) => ({ ...current, fee_pct: event.target.value }))
+                  }
+                />
+              </div>
+            ) : null}
             <div>
               <label>Effective from</label>
               <input
@@ -1433,21 +1514,23 @@ export default function Award() {
               />
             </div>
           </div>
-          <p>
-            <label>
-              <input
-                type="checkbox"
-                checked={policyForm.fee_in_burden}
-                onChange={(event) =>
-                  setPolicyForm((current) => ({
-                    ...current,
-                    fee_in_burden: event.target.checked,
-                  }))
-                }
-              />{" "}
-              Include fee in the hourly burden
-            </label>
-          </p>
+          {award.type_code !== "CPFF" && award.type_code !== "FFP" ? (
+            <p>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={policyForm.fee_in_burden}
+                  onChange={(event) =>
+                    setPolicyForm((current) => ({
+                      ...current,
+                      fee_in_burden: event.target.checked,
+                    }))
+                  }
+                />{" "}
+                Include fee in the hourly burden
+              </label>
+            </p>
+          ) : null}
           <p>
             <button type="submit">Revise rate policy</button>
           </p>
@@ -1530,6 +1613,21 @@ export default function Award() {
                 />
               </div>
             ) : null}
+            {award.type_code === "FFP" ? (
+              <div>
+                <label>Fee / profit % of funded value</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={modForm.fee_pct}
+                  onChange={(event) =>
+                    setModForm((current) => ({ ...current, fee_pct: event.target.value }))
+                  }
+                />
+                <small>Calculated fee: {formatCents(modFfpFeeCents)}</small>
+              </div>
+            ) : null}
             <div>
               <label>PoP start</label>
               <input
@@ -1577,7 +1675,17 @@ export default function Award() {
                       type="number"
                       min="0"
                       step="0.01"
-                      value={line.dollars}
+                      disabled={
+                        line.category_code === "fee" &&
+                        (award.type_code === "CPFF" || award.type_code === "FFP")
+                      }
+                      value={
+                        line.category_code === "fee" && award.type_code === "CPFF"
+                          ? modForm.fee_pot_dollars
+                          : line.category_code === "fee" && award.type_code === "FFP"
+                            ? centsToDollarInput(modFfpFeeCents)
+                            : line.dollars
+                      }
                       onChange={(event) => {
                         const dollars = event.target.value;
                         setModForm((current) => ({

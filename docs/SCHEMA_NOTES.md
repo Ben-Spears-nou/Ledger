@@ -26,13 +26,15 @@ Dates are ISO `YYYY-MM-DD`. Timestamps are SQLite `datetime('now')` text.
 | `budget_category` | `category_code` | Editable seed; not hard-coded in app logic except personnel/fee helpers |
 | `agency` | `agency_name` | Grows from the UI when a new string is used (D1) |
 | `rate_policy_template` | `template_code` | Fills the create form only. Percents seed as 0 (do not fabricate rates) |
-| `budget_template_line` | id | Default budget lines per `award_type` |
+| `budget_template_line` | id | Default budget lines per `award_type`. One row per `(award_type_code, category_code)` (unique index, D50) |
 
 Admin `GET /lookups` also returns `audit_actions` and `audit_entity_types`
 (Phase 8 / D37). Those are code lists for the Audit UI, not tables.
 
-`award_type.fee_engine = fixed_pot` means fee is a stored pot (`award.fee_pot_cents`),
-never `awarded_cost × fee_pct`.
+`award_type.fee_engine = fixed_pot` means fee is a directly entered pot
+(`award.fee_pot_cents`). CPFF uses this path and stores `award.fee_pct = 0`.
+FFP stores a management fee/profit percentage on `award.fee_pct`; its fee pot
+is derived from `funded_amount_cents × fee_pct / 10000` (D51).
 
 ---
 
@@ -50,13 +52,14 @@ never `awarded_cost × fee_pct`.
 
 | Table | Notes |
 |---|---|
-| `award` | Intake fields plus a **stamped** copy of the type's rules profile (`enforce_ceiling`, `labor_incurred`, `fee_engine`, `ceiling_warn_pct`, `overrun_policy`). Type restamp only while unused (D39). Unused awards may be deleted; used awards close. |
+| `award` | Intake fields plus a **stamped** copy of the type's rules profile (`enforce_ceiling`, `labor_incurred`, `fee_engine`, `ceiling_warn_pct`, `overrun_policy`). `fee_pct` is the funded-value fee/profit percentage for FFP only (D51). Type restamp only while unused (D39). Unused awards may be deleted; used awards close. |
 | `award_mod` | History of money/PoP changes. New row per mod; award current fields update |
 | `clin` | Optional CLINs. `is_option=1` and `exercised_at IS NULL` is pipeline money (D17). Phase 9 can add/patch/exercise; delete only while unexercised. |
 | `budget_version` | One `is_active=1` per award (partial unique index) |
-| `budget_line` | Approved cents on a version. Remaining is a view |
+| `budget_line` | Approved cents on a version. Remaining is a view. One row per `(budget_version_id, category_code)` (unique index, D50) |
 | `award_rate_policy` | Dated recipe (D11). Revisions are new rows (D5) |
 | `award_rate_override` | Per person **or** labor category loaded cents |
+| `ffp_billing_period` | Persisted contract-working-month invoice schedule. Submitted rows are immutable inputs to later rescheduling (D51) |
 
 `award_rate_policy.labor_budget_line_id` is where Phase 2 posts loaded labor.
 It may be null until a personnel line exists.

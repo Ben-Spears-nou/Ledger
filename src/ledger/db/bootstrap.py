@@ -144,17 +144,88 @@ def ensure_phase10_schema(connection: Connection) -> None:
         )
 
 
+def ensure_phase15_schema(connection: Connection) -> None:
+    """Add FFP fee-percent fields to databases created before Phase 15."""
+    award_cols = _column_names(connection, "award")
+    if award_cols and "fee_pct" not in award_cols:
+        connection.exec_driver_sql(
+            "ALTER TABLE award ADD COLUMN fee_pct INTEGER NOT NULL DEFAULT 0 CHECK (fee_pct >= 0)"
+        )
+    mod_cols = _column_names(connection, "award_mod")
+    if mod_cols and "fee_pct" not in mod_cols:
+        connection.exec_driver_sql(
+            "ALTER TABLE award_mod ADD COLUMN fee_pct INTEGER CHECK (fee_pct >= 0)"
+        )
+
+
+def dedupe_budget_lines(connection: Connection) -> None:
+    """Collapse repeated budget rows so the Phase 14 unique indexes can be built.
+
+    Two legacy paths created duplicates: replaying ``schema.sql`` seeds into
+    ``budget_template_line`` (no unique key before Phase 14), and modifications
+    copying an already-duplicated version forward. Keeps the lowest id per
+    ``(budget_version_id, category_code)``, keeps the largest approved amount
+    in the structurally duplicated group, and repoints references before
+    deleting the extras.
+    """
+    if _column_names(connection, "budget_template_line"):
+        connection.exec_driver_sql(
+            "DELETE FROM budget_template_line WHERE budget_template_line_id NOT IN ("
+            "SELECT MIN(budget_template_line_id) FROM budget_template_line "
+            "GROUP BY award_type_code, category_code)"
+        )
+    if not _column_names(connection, "budget_line"):
+        return
+    connection.exec_driver_sql("DROP TABLE IF EXISTS _budget_line_dedupe")
+    connection.exec_driver_sql(
+        "CREATE TEMP TABLE _budget_line_dedupe AS "
+        "SELECT line.budget_line_id AS drop_id, keeper.keep_id AS keep_id "
+        "FROM budget_line AS line JOIN ("
+        "SELECT budget_version_id, category_code, MIN(budget_line_id) AS keep_id "
+        "FROM budget_line GROUP BY budget_version_id, category_code"
+        ") AS keeper ON keeper.budget_version_id = line.budget_version_id "
+        "AND keeper.category_code = line.category_code "
+        "WHERE line.budget_line_id <> keeper.keep_id"
+    )
+    duplicates = connection.exec_driver_sql("SELECT COUNT(*) FROM _budget_line_dedupe").scalar()
+    if duplicates:
+        connection.exec_driver_sql(
+            "UPDATE budget_line SET approved_cents = ("
+            "SELECT MAX(other.approved_cents) FROM budget_line AS other "
+            "WHERE other.budget_version_id = budget_line.budget_version_id "
+            "AND other.category_code = budget_line.category_code"
+            ") WHERE budget_line_id IN (SELECT keep_id FROM _budget_line_dedupe)"
+        )
+        for table, column in (
+            ("award_rate_policy", "labor_budget_line_id"),
+            ("charge", "budget_line_id"),
+        ):
+            if column not in _column_names(connection, table):
+                continue
+            connection.exec_driver_sql(
+                f"UPDATE {table} SET {column} = ("
+                f"SELECT keep_id FROM _budget_line_dedupe WHERE drop_id = {column}"
+                f") WHERE {column} IN (SELECT drop_id FROM _budget_line_dedupe)"
+            )
+        connection.exec_driver_sql(
+            "DELETE FROM budget_line WHERE budget_line_id IN "
+            "(SELECT drop_id FROM _budget_line_dedupe)"
+        )
+    connection.exec_driver_sql("DROP TABLE _budget_line_dedupe")
+
+
 def is_initialized(engine: Engine) -> bool:
     """Report whether the core award table already exists."""
     return "award" in existing_objects(engine).tables
 
 
 def apply_schema_sql(connection: Connection, script: str) -> int:
-    """Create tables/views, ALTER existing columns, then indexes.
+    """Create tables/views, ALTER existing columns, seed, dedupe, then indexes.
 
     ``CREATE TABLE IF NOT EXISTS`` will not add ``timesheet_line.task_id``
     on a Phase 2 database. Indexes that mention that column must wait
-    until ``ensure_phase3_schema`` runs.
+    until ``ensure_phase3_schema`` runs. Budget rows are deduped after the
+    seeds replay so the unique budget indexes can be built.
     """
     indexes: list[str] = []
     seeds: list[str] = []
@@ -169,9 +240,11 @@ def apply_schema_sql(connection: Connection, script: str) -> int:
     ensure_share_readiness_schema(connection)
     ensure_phase3_schema(connection)
     ensure_phase10_schema(connection)
+    ensure_phase15_schema(connection)
     for statement in seeds:
         connection.exec_driver_sql(as_idempotent_seed(statement))
         seeded += 1
+    dedupe_budget_lines(connection)
     for statement in indexes:
         connection.exec_driver_sql(statement)
     return seeded

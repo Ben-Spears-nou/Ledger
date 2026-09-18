@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db, require_admin
-from ledger.models import Award, AwardRatePolicy, Clin, UserAccount
+from ledger.models import Award, AwardRatePolicy, Clin, FfpBillingPeriod, UserAccount
 from ledger.schemas.awards import (
     AwardCardOut,
     AwardCreate,
@@ -19,6 +19,8 @@ from ledger.schemas.awards import (
     ClinIn,
     ClinOut,
     ClinUpdate,
+    FfpBillingPeriodOut,
+    FfpBillingSubmitIn,
     RatePolicyIn,
     RatePolicyOut,
 )
@@ -35,8 +37,10 @@ from ledger.services.awards import (
     revise_rate_policy,
     serialize_award,
     serialize_award_card,
+    serialize_billing_period,
     serialize_clin,
     serialize_policy,
+    submit_billing_period,
     update_award,
     update_clin,
 )
@@ -62,6 +66,13 @@ def _get_clin(session: Session, award: Award, clin_id: int) -> Clin:
     row = session.get(Clin, clin_id)
     if row is None or row.award_id != award.award_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "clin not found")
+    return row
+
+
+def _get_billing_period(session: Session, award: Award, billing_period_id: int) -> FfpBillingPeriod:
+    row = session.get(FfpBillingPeriod, billing_period_id)
+    if row is None or row.award_id != award.award_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "FFP billing period not found")
     return row
 
 
@@ -223,6 +234,27 @@ def post_mod(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     session.flush()
     return serialize_award(session, award)
+
+
+@router.post(
+    "/{award_id}/billing-periods/{billing_period_id}/submit",
+    response_model=FfpBillingPeriodOut,
+)
+def post_billing_period_submit(
+    award_id: int,
+    billing_period_id: int,
+    payload: FfpBillingSubmitIn,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> FfpBillingPeriodOut:
+    """Record submission of one scheduled FFP monthly invoice."""
+    award = _get_award(session, award_id)
+    row = _get_billing_period(session, award, billing_period_id)
+    try:
+        submit_billing_period(session, award, row, payload, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
+    return serialize_billing_period(row)
 
 
 @router.post(

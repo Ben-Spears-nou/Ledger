@@ -46,6 +46,7 @@ function emptyForm(lookups) {
     awarded_dollars: "",
     funded_dollars: "",
     fee_pot_dollars: "",
+    ffp_fee_pct: "",
     template_code: template?.template_code || "",
     cost_basis_code: template?.cost_basis_code || "fully_burdened",
     fringe_pct: pctToInput(template?.fringe_pct ?? 0),
@@ -70,6 +71,7 @@ function applyType(lookups, form, typeCode) {
     ga_pct: pctToInput(template?.ga_pct ?? 0),
     fee_pct: pctToInput(template?.fee_pct ?? 0),
     fee_in_burden: Boolean(template?.fee_in_burden),
+    ffp_fee_pct: typeCode === "FFP" ? form.ffp_fee_pct : "",
     budget_lines: linesForType(lookups, typeCode),
   };
 }
@@ -119,6 +121,12 @@ export default function AwardNew() {
     [lookups, form],
   );
   const showFeePot = selectedType?.fee_engine === "fixed_pot";
+  const isFfp = form?.type_code === "FFP";
+  const previewFundedCents = parseDollarsToCents(form?.funded_dollars || "") ?? 0;
+  const previewFfpFeePct = parsePctToHundredths(form?.ffp_fee_pct || "") ?? 0;
+  const previewFfpFeeCents = Math.floor(
+    (previewFundedCents * previewFfpFeePct + 5000) / 10000,
+  );
 
   function setField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -169,7 +177,12 @@ export default function AwardNew() {
     try {
       const awarded = parseDollarsToCents(form.awarded_dollars) ?? 0;
       const funded = parseDollarsToCents(form.funded_dollars) ?? 0;
-      const feePot = showFeePot ? (parseDollarsToCents(form.fee_pot_dollars) ?? 0) : 0;
+      const ffpFeePct = isFfp ? (parsePctToHundredths(form.ffp_fee_pct) ?? 0) : 0;
+      const feePot = isFfp
+        ? Math.floor((funded * ffpFeePct + 5000) / 10000)
+        : showFeePot
+          ? (parseDollarsToCents(form.fee_pot_dollars) ?? 0)
+          : 0;
       const budgetLines = form.budget_lines.map((line) => {
         let approved = parseDollarsToCents(line.dollars) ?? 0;
         if (line.category_code === "fee" && approved === 0 && feePot) {
@@ -198,15 +211,20 @@ export default function AwardNew() {
           funded_through: form.funded_through || null,
           awarded_cost_cents: awarded,
           funded_amount_cents: funded,
-          fee_pot_cents: feePot,
+          fee_pct: ffpFeePct,
+          fee_pot_cents: isFfp ? 0 : feePot,
           rate_policy: {
             template_code: form.template_code || null,
             cost_basis_code: form.cost_basis_code,
             fringe_pct: parsePctToHundredths(form.fringe_pct) ?? 0,
             oh_pct: parsePctToHundredths(form.oh_pct) ?? 0,
             ga_pct: parsePctToHundredths(form.ga_pct) ?? 0,
-            fee_pct: parsePctToHundredths(form.fee_pct) ?? 0,
-            fee_in_burden: form.fee_in_burden,
+            fee_pct:
+              form.type_code === "CPFF" || isFfp
+                ? 0
+                : (parsePctToHundredths(form.fee_pct) ?? 0),
+            fee_in_burden:
+              form.type_code === "CPFF" || isFfp ? false : form.fee_in_burden,
             effective_from: form.pop_start,
           },
           budget_lines: budgetLines,
@@ -418,6 +436,19 @@ export default function AwardNew() {
                   />
                 </div>
               ) : null}
+              {isFfp ? (
+                <div>
+                  <label>Fee / profit % of funded value</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.ffp_fee_pct}
+                    onChange={(event) => setField("ffp_fee_pct", event.target.value)}
+                  />
+                  <small>Calculated fee: ${(previewFfpFeeCents / 100).toFixed(2)}</small>
+                </div>
+              ) : null}
             </div>
           </>
         ) : null}
@@ -485,32 +516,45 @@ export default function AwardNew() {
                   onChange={(event) => setField("ga_pct", event.target.value)}
                 />
               </div>
-              <div>
-                <label>Fee % (in burden only if checked)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.fee_pct}
-                  onChange={(event) => setField("fee_pct", event.target.value)}
-                />
-              </div>
+              {form.type_code !== "CPFF" && !isFfp ? (
+                <div>
+                  <label>Fee % (in burden only if checked)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.fee_pct}
+                    onChange={(event) => setField("fee_pct", event.target.value)}
+                  />
+                </div>
+              ) : null}
             </div>
-            <p>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={form.fee_in_burden}
-                  onChange={(event) => setField("fee_in_burden", event.target.checked)}
-                />{" "}
-                Include fee in the hourly burden
-              </label>
-            </p>
+            {form.type_code !== "CPFF" && !isFfp ? (
+              <p>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={form.fee_in_burden}
+                    onChange={(event) => setField("fee_in_burden", event.target.checked)}
+                  />{" "}
+                  Include fee in the hourly burden
+                </label>
+              </p>
+            ) : (
+              <p className="muted">
+                {isFfp
+                  ? "FFP fee is profit on funded value, not part of the hourly burden."
+                  : "CPFF fee is the negotiated fixed amount entered on the Money step."}
+              </p>
+            )}
           </>
         ) : null}
         {step === 5 ? (
           <>
-            <p className="muted">Leave a line blank for $0. Fee can inherit the fee pot.</p>
+            <p className="muted">
+              Leave a line blank for $0. Fee is filled from the CPFF fixed amount or calculated
+              FFP fee.
+            </p>
             <table>
               <thead>
                 <tr>
@@ -527,7 +571,17 @@ export default function AwardNew() {
                         type="number"
                         min="0"
                         step="0.01"
-                        value={line.dollars}
+                        disabled={
+                          line.category_code === "fee" &&
+                          (form.type_code === "CPFF" || isFfp)
+                        }
+                        value={
+                          line.category_code === "fee" && form.type_code === "CPFF"
+                            ? form.fee_pot_dollars
+                            : line.category_code === "fee" && isFfp
+                              ? (previewFfpFeeCents / 100).toFixed(2)
+                              : line.dollars
+                        }
                         onChange={(event) => {
                           const dollars = event.target.value;
                           setForm((current) => ({

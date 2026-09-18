@@ -204,6 +204,7 @@ INSERT INTO budget_template_line (award_type_code, category_code, label, sort_or
     ('FFP',      'odc',       'ODCs',      30),
     ('FFP',      'equipment', 'Equipment', 40),
     ('FFP',      'sub',       'Subs',      50),
+    ('FFP',      'fee',       'Fee / profit', 60),
     ('TM',       'personnel', 'Labor',     10),
     ('TM',       'travel',    'Travel',    20),
     ('TM',       'odc',       'ODCs',      30),
@@ -268,6 +269,7 @@ CREATE TABLE IF NOT EXISTS award (
     funded_through        TEXT,
     awarded_cost_cents    INTEGER NOT NULL DEFAULT 0 CHECK (awarded_cost_cents >= 0),
     funded_amount_cents   INTEGER NOT NULL DEFAULT 0 CHECK (funded_amount_cents >= 0),
+    fee_pct                INTEGER NOT NULL DEFAULT 0 CHECK (fee_pct >= 0),
     fee_pot_cents         INTEGER NOT NULL DEFAULT 0 CHECK (fee_pot_cents >= 0),
     enforce_ceiling       INTEGER NOT NULL CHECK (enforce_ceiling IN (0, 1)),
     labor_incurred        INTEGER NOT NULL CHECK (labor_incurred IN (0, 1)),
@@ -290,6 +292,7 @@ CREATE TABLE IF NOT EXISTS award_mod (
     description           TEXT,
     awarded_cost_cents    INTEGER,
     funded_amount_cents   INTEGER,
+    fee_pct                INTEGER,
     fee_pot_cents         INTEGER,
     pop_start             TEXT,
     pop_end               TEXT,
@@ -368,6 +371,10 @@ CREATE INDEX IF NOT EXISTS ix_policy_award_from ON award_rate_policy (award_id, 
 CREATE INDEX IF NOT EXISTS ix_person_rate_from ON person_rate (person_id, effective_from);
 CREATE INDEX IF NOT EXISTS ix_clin_award ON clin (award_id);
 CREATE INDEX IF NOT EXISTS ix_budget_line_version ON budget_line (budget_version_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_budget_line_version_category
+    ON budget_line (budget_version_id, category_code);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_budget_template_line_type_category
+    ON budget_template_line (award_type_code, category_code);
 
 -- =====================================================================
 -- Schedule (Phase 3). Tasks under awards; assignments and capacity are hours.
@@ -750,6 +757,32 @@ CREATE TABLE IF NOT EXISTS funding_expectation (
 
 CREATE INDEX IF NOT EXISTS ix_funding_expectation_award
     ON funding_expectation (award_id, expected_date);
+
+-- =====================================================================
+-- FFP billing schedule (Phase 15). Funded price spread over PoP months.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS ffp_billing_period (
+    billing_period_id  INTEGER PRIMARY KEY,
+    award_id           INTEGER NOT NULL REFERENCES award (award_id),
+    period_number      INTEGER NOT NULL CHECK (period_number > 0),
+    period_start       TEXT NOT NULL,
+    period_end         TEXT NOT NULL,
+    scheduled_cents    INTEGER NOT NULL CHECK (scheduled_cents >= 0),
+    submitted_cents    INTEGER CHECK (submitted_cents >= 0),
+    submitted_at       TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by         INTEGER REFERENCES user_account (user_account_id),
+    UNIQUE (award_id, period_start),
+    CHECK (period_end >= period_start),
+    CHECK (
+        (submitted_cents IS NULL AND submitted_at IS NULL)
+        OR (submitted_cents IS NOT NULL AND submitted_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS ix_ffp_billing_award_period
+    ON ffp_billing_period (award_id, period_number);
 
 -- =====================================================================
 -- Pipeline forecast (Phase 6). Not remaining (D32).

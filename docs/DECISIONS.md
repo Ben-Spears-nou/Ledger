@@ -876,3 +876,54 @@ Extracted requirement dates are explicitly a starter plan: top-level SOW
 headings (for example 4.1, 4.2) are spaced sequentially across the
 contract PoP and must be reviewed before confirmation. Confirmed rows
 remain editable; extraction never silently changes existing rows.
+
+---
+
+## D50 — A budget version holds one line per category
+
+`budget_line` is unique on `(budget_version_id, category_code)` and
+`budget_template_line` is unique on `(award_type_code, category_code)`.
+A category appears at most once per version, so approved money cannot be
+counted twice and the award page cannot list a category twice.
+
+Two paths used to create repeats and are now closed:
+
+- replaying `db/schema.sql` re-inserted the template seeds, because
+  `INSERT OR IGNORE` had no unique key to conflict with
+- a modification copied the active version forward line by line, carrying
+  any existing repeat into every later version
+
+`apply_schema_sql` dedupes before it builds the unique indexes, so an
+existing database is repaired in place: the lowest `budget_line_id` per
+category survives and keeps the largest approved amount in the structurally
+duplicated group. `charge.budget_line_id` plus
+`award_rate_policy.labor_budget_line_id` are repointed to that survivor before
+the extras are deleted. An award or modification with two lines in one
+category is a 400, not a merge. Genuine funding changes are dated
+modifications (D51), not repeated budget rows.
+
+---
+
+## D51 — CPFF fee is fixed; FFP fee and billing derive from funding
+
+Fee intake follows the award type:
+
+- **CPFF** stores the negotiated fixed fee in `award.fee_pot_cents`. It does
+  not request or store a fee percentage and fee is never part of hourly burden.
+- **FFP** stores a management fee/profit percentage in `award.fee_pct`.
+  `fee_pot_cents` and the active fee budget line are calculated as
+  `round(funded_amount_cents × fee_pct / 10000)`. Operators cannot enter an
+  independent FFP fee amount. FFP fee is not part of hourly burden.
+
+An FFP award gets persisted `ffp_billing_period` rows. Periods are contract
+working months anchored to the PoP start, not calendar months. Funded contract
+value is divided evenly across those periods; indivisible cents go in the final
+period so the schedule sums exactly to funded value.
+
+Submitting a period records its scheduled amount and date. A later
+modification on the same contract keeps submitted periods, subtracts their
+submitted dollars from the new funded total, and redistributes the remainder
+over working months after the last submitted period. Funding cannot be reduced
+below submitted invoices. Additional funding or a PoP extension is a
+modification; create a new award only for a genuinely separate project or
+contract.

@@ -38,6 +38,7 @@ class Award(Base):
     funded_through: Mapped[str | None] = mapped_column(Text)
     awarded_cost_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     funded_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fee_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     fee_pot_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     enforce_ceiling: Mapped[int] = mapped_column(Integer, nullable=False)
     labor_incurred: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -62,6 +63,7 @@ class AwardMod(Base):
     description: Mapped[str | None] = mapped_column(Text)
     awarded_cost_cents: Mapped[int | None] = mapped_column(Integer)
     funded_amount_cents: Mapped[int | None] = mapped_column(Integer)
+    fee_pct: Mapped[int | None] = mapped_column(Integer)
     fee_pot_cents: Mapped[int | None] = mapped_column(Integer)
     pop_start: Mapped[str | None] = mapped_column(Text)
     pop_end: Mapped[str | None] = mapped_column(Text)
@@ -139,6 +141,25 @@ class FundingExpectation(Base):
     expected_date: Mapped[str] = mapped_column(Text, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())
+    created_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_account.user_account_id")
+    )
+
+
+class FfpBillingPeriod(Base):
+    """One working-month invoice period for an FFP award."""
+
+    __tablename__ = "ffp_billing_period"
+
+    billing_period_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    award_id: Mapped[int] = mapped_column(Integer, ForeignKey("award.award_id"), nullable=False)
+    period_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_start: Mapped[str] = mapped_column(Text, nullable=False)
+    period_end: Mapped[str] = mapped_column(Text, nullable=False)
+    scheduled_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    submitted_cents: Mapped[int | None] = mapped_column(Integer)
+    submitted_at: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())
     created_by: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("user_account.user_account_id")

@@ -140,4 +140,4 @@ def test_alembic_upgrade_on_empty_database(tmp_path: Path, monkeypatch: pytest.M
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
     assert REQUIRED_TABLES <= tables
     assert "alembic_version" in tables
-    assert version == "0010_phase13_work_plan"
+    assert version == "0012_phase15_ffp_billing"

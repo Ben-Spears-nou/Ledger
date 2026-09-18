@@ -64,6 +64,7 @@ class AwardCreate(BaseModel):
     funded_through: str | None = None
     awarded_cost_cents: int = Field(default=0, ge=0)
     funded_amount_cents: int = Field(default=0, ge=0)
+    fee_pct: int = Field(default=0, ge=0)
     fee_pot_cents: int = Field(default=0, ge=0)
     rate_policy: RatePolicyIn
     budget_lines: list[BudgetLineIn] | None = None
@@ -118,6 +119,7 @@ class AwardModCreate(BaseModel):
     description: str | None = None
     awarded_cost_cents: int | None = Field(default=None, ge=0)
     funded_amount_cents: int | None = Field(default=None, ge=0)
+    fee_pct: int | None = Field(default=None, ge=0)
     fee_pot_cents: int | None = Field(default=None, ge=0)
     pop_start: str | None = None
     pop_end: str | None = None
@@ -178,6 +180,25 @@ class ClinOut(BaseModel):
     exercised_at: str | None
 
 
+class FfpBillingSubmitIn(BaseModel):
+    """Record an FFP invoice submission for one scheduled period."""
+
+    submitted_cents: int | None = Field(default=None, ge=0)
+    submitted_at: str | None = None
+
+
+class FfpBillingPeriodOut(BaseModel):
+    """One persisted FFP working-month invoice period."""
+
+    billing_period_id: int
+    period_number: int
+    period_start: str
+    period_end: str
+    scheduled_cents: int
+    submitted_cents: int | None
+    submitted_at: str | None
+
+
 class AwardRemainingOut(BaseModel):
     """``v_budget_remaining`` row."""
 
@@ -229,6 +250,7 @@ class AwardOut(BaseModel):
     funded_through: str | None
     awarded_cost_cents: int
     funded_amount_cents: int
+    fee_pct: int
     fee_pot_cents: int
     enforce_ceiling: bool
     labor_incurred: bool
@@ -238,6 +260,7 @@ class AwardOut(BaseModel):
     current_policy: RatePolicyOut | None = None
     budget_lines: list[BudgetLineOut] = Field(default_factory=list)
     clins: list[ClinOut] = Field(default_factory=list)
+    billing_periods: list[FfpBillingPeriodOut] = Field(default_factory=list)
     remaining: AwardRemainingOut | None = None
     can_delete: bool = False
     type_locked: bool = False

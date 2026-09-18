@@ -37,10 +37,51 @@ function RequireAdmin({ children }) {
   return children;
 }
 
+const NAV_GROUPS = [
+  { label: "", items: [{ to: "/home", text: "Home", admin: true }] },
+  {
+    label: "Me",
+    items: [
+      { to: "/me/week", text: "My week" },
+      { to: "/me/password", text: "Password" },
+    ],
+  },
+  {
+    label: "Awards",
+    items: [
+      { to: "/approvals", text: "Approvals", admin: true },
+      { to: "/portfolio", text: "Awards", admin: true },
+      { to: "/staffing", text: "Staffing", admin: true },
+      { to: "/people", text: "People", admin: true },
+      { to: "/instruments", text: "Instruments", admin: true },
+    ],
+  },
+  {
+    label: "Charts",
+    items: [
+      { to: "/gantt", text: "Gantt", admin: true },
+      { to: "/work-gantt", text: "Work Gantt", admin: true },
+    ],
+  },
+  {
+    label: "Oversight",
+    items: [
+      { to: "/compliance", text: "Compliance", admin: true },
+      { to: "/alerts", text: "Alerts", admin: true },
+      { to: "/audit", text: "Audit", admin: true },
+    ],
+  },
+  { label: "", items: [{ to: "/help", text: "Help" }] },
+];
+
 function Shell({ children }) {
   const navigate = useNavigate();
   const user = getUser();
   const isAdmin = user && user.role_code === "admin";
+  const groups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => isAdmin || !item.admin),
+  })).filter((group) => group.items.length);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState([]);
   const [searchError, setSearchError] = useState("");
@@ -67,60 +108,58 @@ function Shell({ children }) {
   }
 
   return (
-    <>
-      <header className="app">
-        <strong>Ledger</strong>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <strong className="brand">Ledger</strong>
+        {isAdmin ? (
+          <form className="sidebar-search" onSubmit={onSearch}>
+            <input
+              aria-label="Search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search"
+            />
+            <button type="submit">Find</button>
+          </form>
+        ) : null}
         <nav>
-          {isAdmin ? <NavLink to="/home">Home</NavLink> : null}
-          <NavLink to="/me/week">My week</NavLink>
-          <NavLink to="/me/password">Password</NavLink>
-          {isAdmin ? <NavLink to="/approvals">Approvals</NavLink> : null}
-          {isAdmin ? <NavLink to="/portfolio">Awards</NavLink> : null}
-          {isAdmin ? <NavLink to="/staffing">Staffing</NavLink> : null}
-          {isAdmin ? <NavLink to="/people">People</NavLink> : null}
-          {isAdmin ? <NavLink to="/instruments">Instruments</NavLink> : null}
-          {isAdmin ? <NavLink to="/gantt">Gantt</NavLink> : null}
-          {isAdmin ? <NavLink to="/work-gantt">Work Gantt</NavLink> : null}
-          {isAdmin ? <NavLink to="/compliance">Compliance</NavLink> : null}
-          {isAdmin ? <NavLink to="/alerts">Alerts</NavLink> : null}
-          {isAdmin ? <NavLink to="/audit">Audit</NavLink> : null}
-          <NavLink to="/help">Help</NavLink>
+          {groups.map((group, index) => (
+            <div className="nav-group" key={group.label || `group-${index}`}>
+              {group.label ? <p className="nav-heading">{group.label}</p> : null}
+              {group.items.map((item) => (
+                <NavLink key={item.to} to={item.to}>
+                  {item.text}
+                </NavLink>
+              ))}
+            </div>
+          ))}
         </nav>
-        <span>
-          {isAdmin ? (
-            <form className="header-search" onSubmit={onSearch}>
-              <input
-                aria-label="Search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search"
-              />
-              <button type="submit">Find</button>
-            </form>
-          ) : null}{" "}
-          {user ? user.display_name : ""}{" "}
+        <div className="sidebar-foot">
+          <p>{user ? user.display_name : ""}</p>
           <button type="button" className="secondary" onClick={logout}>
             Log out
           </button>
-        </span>
-      </header>
-      {searchError ? <p className="error">{searchError}</p> : null}
-      {hits.length ? (
-        <div className="card search-hits">
-          <h2>Search</h2>
-          <ul>
-            {hits.map((hit) => (
-              <li key={`${hit.kind}-${hit.id}`}>
-                <NavLink to={hit.href} onClick={() => setHits([])}>
-                  {hit.kind}: {hit.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
         </div>
-      ) : null}
-      <main>{children}</main>
-    </>
+      </aside>
+      <div className="app-main">
+        {searchError ? <p className="error">{searchError}</p> : null}
+        {hits.length ? (
+          <div className="card search-hits">
+            <h2>Search</h2>
+            <ul>
+              {hits.map((hit) => (
+                <li key={`${hit.kind}-${hit.id}`}>
+                  <NavLink to={hit.href} onClick={() => setHits([])}>
+                    {hit.kind}: {hit.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <main>{children}</main>
+      </div>
+    </div>
   );
 }
 

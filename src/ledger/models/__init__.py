@@ -7,6 +7,7 @@ from ledger.models.awards import (
     AwardRateOverride,
     AwardRatePolicy,
     Clin,
+    FfpBillingPeriod,
     FundingExpectation,
 )
 from ledger.models.base import Base
@@ -72,6 +73,7 @@ __all__ = [
     "CostBasis",
     "Document",
     "DocumentKind",
+    "FfpBillingPeriod",
     "FundingExpectation",
     "GlossaryAlias",
     "GlossaryTerm",
