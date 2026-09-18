@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents, todayIso } from "../api.js";
-import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Alerts() {
   const [rows, setRows] = useState([]);
@@ -36,7 +35,7 @@ export default function Alerts() {
         compliance calendar.
       </p>
       {error ? <p className="error">{error}</p> : null}
-      <CollapsibleSection title="Alert list">
+      <div className="card">
         <form onSubmit={applyFilters}>
           <label>As of</label>
           <input type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} />
@@ -70,7 +69,7 @@ export default function Alerts() {
             ))}
           </tbody>
         </table>
-      </CollapsibleSection>
+      </div>
     </>
   );
 }

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents } from "../api.js";
-import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Approvals() {
   const [weeks, setWeeks] = useState([]);
@@ -46,15 +45,11 @@ export default function Approvals() {
       {error ? <p className="error">{error}</p> : null}
       {weeks.length === 0 ? <p className="muted">No submitted weeks.</p> : null}
       {weeks.map((week) => (
-        <CollapsibleSection
-          key={week.timesheet_period_id}
-          title={
-            <>
+        <div className="card" key={week.timesheet_period_id}>
+          <h2>
             {week.display_name} · week of {week.week_start}{" "}
             <span className="status">{formatCents(week.amount_cents)}</span>
-            </>
-          }
-        >
+          </h2>
           <p className="muted">{week.hours_total} hours</p>
           {(week.warnings || []).length ? (
             <ul>
@@ -117,7 +112,7 @@ export default function Approvals() {
               </button>
             </div>
           </div>
-        </CollapsibleSection>
+        </div>
       ))}
     </>
   );

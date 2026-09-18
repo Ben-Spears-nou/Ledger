@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
-import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Compliance() {
   const [rows, setRows] = useState([]);
@@ -76,7 +75,7 @@ export default function Compliance() {
       <p className="muted">Due dates across awards. This is not remaining money and not an alert engine.</p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
-      <CollapsibleSection title="Compliance items">
+      <div className="card">
         <form onSubmit={applyFilters}>
           <div className="row">
             <div>
@@ -168,7 +167,7 @@ export default function Compliance() {
             ))}
           </tbody>
         </table>
-      </CollapsibleSection>
+      </div>
     </>
   );
 }

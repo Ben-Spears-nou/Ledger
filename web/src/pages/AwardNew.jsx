@@ -7,7 +7,6 @@ import {
   pctToInput,
   todayIso,
 } from "../api.js";
-import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 const STEPS = ["Identity", "Classification", "Dates", "Money", "Rates", "Budget"];
 
@@ -260,8 +259,7 @@ export default function AwardNew() {
           </li>
         ))}
       </ol>
-      <CollapsibleSection title={`${step + 1}. ${STEPS[step]}`}>
-        <form onSubmit={step === STEPS.length - 1 ? onSubmit : goNext}>
+      <form onSubmit={step === STEPS.length - 1 ? onSubmit : goNext} className="card">
         {step === 0 ? (
           <div className="row">
             <div>
@@ -618,8 +616,7 @@ export default function AwardNew() {
             {step === STEPS.length - 1 ? "Create award" : "Next"}
           </button>
         </p>
-        </form>
-      </CollapsibleSection>
+      </form>
     </>
   );
 }
