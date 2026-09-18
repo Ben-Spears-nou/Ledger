@@ -46,10 +46,20 @@ _RELATIVE_MONTH = re.compile(
     r"(?:award|award start|start|kickoff))\b",
     re.IGNORECASE,
 )
+_RELATIVE_MONTH_RANGE = re.compile(
+    r"\bmonths?\s*(\d+)\s*[-–—]\s*(\d+)\b",
+    re.IGNORECASE,
+)
 _CONTRACT_POP = re.compile(
     r"Period\s+of\s+Performance\s+From\s+"
-    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})\s+To\s+"
+    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})\s+"
+    r"(?:[A-Z0-9-]+\s+Page\s+\d+\s+of\s+\d+\s+)?To\s+"
     r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})",
+    re.IGNORECASE,
+)
+_CLIN_LINE = re.compile(r"(?m)^\s*(\d{4})\b([^\n]*)$")
+_SCHEDULE_CONTEXT = re.compile(
+    r"period\s+of\s+performance|deliver(?:y|ies)|schedule\s+of\s+planned\s+tasks",
     re.IGNORECASE,
 )
 _CDRL_MARKER = re.compile(r"(?im)^\s*1\.\s*DATA ITEM NO\.\s*$")
@@ -295,15 +305,16 @@ def _written_date(value: str) -> date | None:
 
 
 def contract_pop_dates(text: str) -> tuple[date, date] | None:
-    """Read a Section F ``Period of Performance From ... To ...`` range."""
-    match = _CONTRACT_POP.search(text)
-    if match is None:
+    """Read the full span of Section F ``Period of Performance`` ranges."""
+    ranges: list[tuple[date, date]] = []
+    for match in _CONTRACT_POP.finditer(text):
+        start = _written_date(match.group(1))
+        end = _written_date(match.group(2))
+        if start is not None and end is not None and end >= start:
+            ranges.append((start, end))
+    if not ranges:
         return None
-    start = _written_date(match.group(1))
-    end = _written_date(match.group(2))
-    if start is None or end is None or end < start:
-        return None
-    return start, end
+    return min(start for start, _ in ranges), max(end for _, end in ranges)
 
 
 def _dates_in_line(line: str, award: Award) -> list[date]:
@@ -337,10 +348,93 @@ def _dates_in_line(line: str, award: Award) -> list[date]:
             year = int(match.group(2))
             add(date(year, month, calendar.monthrange(year, month)[1]), match.span())
     award_start = _parse_date(award.pop_start)
+    for match in _RELATIVE_MONTH_RANGE.finditer(line):
+        first_month = int(match.group(1))
+        last_month = int(match.group(2))
+        if first_month < 1 or last_month < first_month:
+            continue
+        start = _add_months(award_start, first_month - 1)
+        due = _add_months(award_start, last_month) - timedelta(days=1)
+        add(start, match.span())
+        # Preserve both boundaries even though they originate from one text span.
+        dates.append(due)
     for match in _RELATIVE_MONTH.finditer(line):
         count = int(match.group(1) or match.group(2))
         add(_add_months(award_start, count), match.span())
     return dates
+
+
+def _clin_titles(text: str) -> dict[str, str]:
+    """Collect concise CLIN titles from Section B-style line-item headings."""
+    titles: dict[str, str] = {}
+    markers = list(_CLIN_LINE.finditer(text))
+    for index, match in enumerate(markers):
+        suffix = " ".join(match.group(2).split())
+        if re.match(r"^\d+\s+Each\b", suffix, re.IGNORECASE):
+            block_end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+            following = [
+                " ".join(line.split())
+                for line in text[match.end() : block_end].splitlines()[:10]
+                if line.strip()
+            ]
+            suffix = next(
+                (
+                    line
+                    for line in following
+                    if re.search(r"\breport\b|\bdeliverable\b|\boption\b", line, re.IGNORECASE)
+                ),
+                "",
+            )
+        if not suffix:
+            continue
+        title = suffix.split("--", 1)[0].strip(" :-")
+        if title and not re.fullmatch(
+            r"(?:Inspection and Acceptance Location|Both)",
+            title,
+            re.IGNORECASE,
+        ):
+            titles.setdefault(match.group(1), title[:120])
+    return titles
+
+
+def extract_clin_schedule(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> list[ScheduleItemOut]:
+    """Extract CLIN performance windows from contract-writing-system PDFs."""
+    markers = list(_CLIN_LINE.finditer(text))
+    titles = _clin_titles(text)
+    found: list[ScheduleItemOut] = []
+    seen: set[tuple[str, date, date]] = set()
+    for index, marker in enumerate(markers):
+        block_end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        block = text[marker.start() : block_end]
+        pop_match = _CONTRACT_POP.search(block)
+        if pop_match is None:
+            continue
+        start = _written_date(pop_match.group(1))
+        due = _written_date(pop_match.group(2))
+        clin = marker.group(1)
+        if start is None or due is None or due < start or (clin, start, due) in seen:
+            continue
+        seen.add((clin, start, due))
+        title = titles.get(clin, "")
+        row_title = f"CLIN {clin}" + (f" — {title}" if title else "")
+        found.append(
+            _draft(
+                award,
+                kind_code=_schedule_kind(title),
+                title=row_title,
+                start=start,
+                due=due,
+                origin_code="extract",
+                notes="Extracted from the CLIN period of performance in Section F.",
+                source_document_id=source_document_id,
+            )
+        )
+    return found
 
 
 def _cdrl_blocks(text: str) -> list[str]:
@@ -649,14 +743,29 @@ def extract_dated_lines(
     )
     if cdrl_rows:
         return cdrl_rows
+    clin_rows = extract_clin_schedule(
+        text,
+        award,
+        source_document_id=source_document_id,
+    )
+    if clin_rows:
+        return clin_rows
     found: list[ScheduleItemOut] = []
     seen: set[tuple[str, str]] = set()
     lines = [" ".join(raw.split()) for raw in text.splitlines()]
     lines = [line for line in lines if line]
     for index, line in enumerate(lines):
-        if not line or not _KEYWORD.search(line):
-            continue
         dates = _dates_in_line(line, award)
+        nearby_context = " ".join(lines[max(0, index - 4) : index + 1])
+        has_relative_timing = bool(
+            _RELATIVE_MONTH_RANGE.search(line) or _RELATIVE_MONTH.search(line)
+        )
+        if not (
+            _KEYWORD.search(line)
+            or has_relative_timing
+            or (dates and _SCHEDULE_CONTEXT.search(nearby_context))
+        ):
+            continue
         if not dates:
             # PDF extraction and Word tables often put the title and date on
             # adjacent lines/cells. Keep the context narrow to avoid joining
@@ -769,10 +878,28 @@ def propose_schedule(
                     )
                 extracted = []
             else:
-                extracted = extract_dated_lines(text, award, source_document_id=source_id)
+                clin_rows = extract_clin_schedule(text, award, source_document_id=source_id)
+                if clin_rows:
+                    pop_row = _contract_pop_draft(text, award, source_document_id=source_id)
+                    items = ([pop_row] if pop_row else []) + clin_rows
+                    notes.append(
+                        "Structured CLIN schedule found; phase-template rows were replaced "
+                        "with contract dates."
+                    )
+                    contract_pop = contract_pop_dates(text)
+                    award_pop = (_parse_date(award.pop_start), _parse_date(award.pop_end))
+                    if contract_pop is not None and contract_pop != award_pop:
+                        notes.append(
+                            "Contract PoP "
+                            f"{contract_pop[0].isoformat()} to {contract_pop[1].isoformat()} "
+                            "differs from the award record; review the award header."
+                        )
+                    extracted = []
+                else:
+                    extracted = extract_dated_lines(text, award, source_document_id=source_id)
             if extracted:
                 items.extend(extracted)
-            elif not cdrl_rows:
+            elif not cdrl_rows and not clin_rows:
                 notes.append("no dated deliverable lines found in the file")
     pasted = (payload.text or "").strip()
     if pasted:
@@ -785,11 +912,20 @@ def propose_schedule(
                 "were replaced with contract dates."
             )
         else:
-            extracted = extract_dated_lines(pasted, award, source_document_id=source_id)
-            if extracted:
-                items.extend(extracted)
+            clin_rows = extract_clin_schedule(pasted, award, source_document_id=source_id)
+            if clin_rows:
+                pop_row = _contract_pop_draft(pasted, award, source_document_id=source_id)
+                items = ([pop_row] if pop_row else []) + clin_rows
+                notes.append(
+                    "Structured CLIN schedule found in pasted text; phase-template rows "
+                    "were replaced with contract dates."
+                )
             else:
-                notes.append("no dated deliverable lines found in the pasted text")
+                extracted = extract_dated_lines(pasted, award, source_document_id=source_id)
+                if extracted:
+                    items.extend(extracted)
+                else:
+                    notes.append("no dated deliverable lines found in the pasted text")
     notes.append("Nothing is saved until you confirm the rows you want to keep.")
     return ScheduleProposeOut(award_id=award.award_id, notes=notes, items=items)
 

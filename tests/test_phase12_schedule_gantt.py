@@ -190,6 +190,84 @@ September 15, 2026
     ]
 
 
+def test_extract_contract_writing_system_clin_schedule() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-09-30",
+        pop_end="2027-09-30",
+    )
+    text = """\
+Section B - Supplies or Services & Prices or Costs
+0001 Monthly Technical Report -- The US Army Research Office
+1 Each USD 58,208.81
+0002 Monthly Technical Report -- The US Army Research Office
+1 Each USD 58,208.76
+Section F - Deliveries or Performance
+0001 1 Each Quantity
+Address and POC
+Period of Performance
+From
+30 Sep 2026
+W911NF26CA035
+Page 38 of 100
+To
+30 Oct 2026
+0002 1 Each Quantity
+Address and POC
+Period of Performance
+From
+31 Oct 2026
+To
+30 Nov 2026
+"""
+
+    assert contract_schedule.contract_pop_dates(text) == (
+        date(2026, 9, 30),
+        date(2026, 11, 30),
+    )
+    rows = contract_schedule.extract_clin_schedule(text, award, source_document_id=12)
+
+    assert [row.title for row in rows] == [
+        "CLIN 0001 — Monthly Technical Report",
+        "CLIN 0002 — Monthly Technical Report",
+    ]
+    assert [row.start_date for row in rows] == ["2026-09-30", "2026-10-31"]
+    assert [row.due_date for row in rows] == ["2026-10-30", "2026-11-30"]
+    assert all(row.kind_code == "report" for row in rows)
+    assert all(row.source_document_id == 12 for row in rows)
+
+
+def test_extract_relative_month_ranges_and_schedule_context() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-09-30",
+        pop_end="2028-09-29",
+    )
+    tasks = """\
+Schedule of planned tasks
+4.2.2: Procure Materials: Months 1-3
+4.2.14: Assess Shelf-Life: Months 4–24
+"""
+    task_rows = contract_schedule.extract_dated_lines(tasks, award, source_document_id=None)
+
+    assert [row.start_date for row in task_rows] == ["2026-09-30", "2026-12-30"]
+    assert [row.due_date for row in task_rows] == ["2026-12-29", "2028-09-29"]
+
+    vertical_pop = """\
+Period of Performance
+From
+30 Sep 2026
+To
+30 Oct 2026
+"""
+    pop_rows = contract_schedule.extract_dated_lines(
+        vertical_pop,
+        award,
+        source_document_id=None,
+    )
+    assert [row.due_date for row in pop_rows] == ["2026-09-30", "2026-10-30"]
+
+
 def test_extract_cdrl_dac_eoc_and_recurring_schedule() -> None:
     award = SimpleNamespace(
         award_id=7,
