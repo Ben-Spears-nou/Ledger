@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents, mondayOnOrBefore, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Staffing() {
   const [weekStart, setWeekStart] = useState(() => mondayOnOrBefore(todayIso()));
@@ -82,7 +83,7 @@ export default function Staffing() {
       </p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
-      <div className="card">
+      <CollapsibleSection title="Staffing window">
         <form onSubmit={apply}>
           <div className="row">
             <div>
@@ -108,13 +109,17 @@ export default function Staffing() {
             <button type="submit">Show</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
       {(board?.people || []).map((person) => (
-        <div className="card" key={person.person_id}>
-          <h2>
+        <CollapsibleSection
+          key={person.person_id}
+          title={
+            <>
             {person.display_name}{" "}
             {person.overload ? <span className="status">overload</span> : null}
-          </h2>
+            </>
+          }
+        >
           <table>
             <thead>
               <tr>
@@ -202,10 +207,9 @@ export default function Staffing() {
               </tbody>
             </table>
           ) : null}
-        </div>
+        </CollapsibleSection>
       ))}
-      <div className="card">
-        <h2>Utilization</h2>
+      <CollapsibleSection title="Utilization">
         <p className="muted">Hours by time code in this window. Direct is award hours. Not payroll.</p>
         <table>
           <thead>
@@ -227,9 +231,8 @@ export default function Staffing() {
             ))}
           </tbody>
         </table>
-      </div>
-      <div className="card">
-        <h2>What if</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="What if">
         <form onSubmit={runScenario}>
           <div className="row">
             <div>
@@ -292,7 +295,7 @@ export default function Staffing() {
             {result.funded_fit === false ? " · over remaining funded" : ""}
           </p>
         ) : null}
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

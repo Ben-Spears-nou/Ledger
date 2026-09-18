@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Help() {
   const [terms, setTerms] = useState([]);
@@ -21,6 +22,7 @@ export default function Help() {
     }
     const node = document.getElementById(id);
     if (node) {
+      node.open = true;
       node.scrollIntoView();
     }
   }, [location.hash, terms]);
@@ -44,7 +46,7 @@ export default function Help() {
         uses this list.
       </p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="card">
+      <CollapsibleSection title="Glossary search">
         <label htmlFor="glossary-filter">Look up a phrase</label>
         <input
           id="glossary-filter"
@@ -52,10 +54,9 @@ export default function Help() {
           onChange={(event) => setFilter(event.target.value)}
           placeholder="remaining, CLIN, Gantt, SOW…"
         />
-      </div>
+      </CollapsibleSection>
       {shown.map((term) => (
-        <div className="card" id={term.term_code} key={term.term_code}>
-          <h2>{term.title}</h2>
+        <CollapsibleSection title={term.title} id={term.term_code} key={term.term_code}>
           <p>{term.definition}</p>
           {term.aliases?.length ? (
             <p className="muted">Also: {term.aliases.join(", ")}</p>
@@ -63,7 +64,7 @@ export default function Help() {
           <p>
             <Link to={term.href}>Open {term.href}</Link>
           </p>
-        </div>
+        </CollapsibleSection>
       ))}
     </>
   );

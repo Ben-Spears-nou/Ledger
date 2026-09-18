@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDaysIso, api, mondayOnOrBefore, newLineKey, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -221,7 +222,7 @@ export default function MyWeek() {
         Pick each award once, then type hours under the days you worked. Leave other days blank.
         Running total is informational.
       </p>
-      <div className="card">
+      <CollapsibleSection title="Week status">
         <div className="row">
           <div>
             <label htmlFor="week">Week of (Monday)</label>
@@ -271,9 +272,9 @@ export default function MyWeek() {
           </div>
         ) : null}
         {returnComment ? <p>Returned: {returnComment}</p> : null}
-      </div>
+      </CollapsibleSection>
 
-      <div className="card week-grid-wrap">
+      <CollapsibleSection title="Time entries" className="week-grid-wrap">
         <table className="week-grid">
           <thead>
             <tr>
@@ -414,23 +415,22 @@ export default function MyWeek() {
             </tr>
           </tfoot>
         </table>
-      </div>
-
-      {!locked ? (
-        <p>
-          <button type="button" className="secondary" onClick={() => setRows((current) => [...current, emptyRow()])}>
-            Add award
-          </button>{" "}
-          <button type="button" onClick={save}>
-            Save
-          </button>{" "}
-          <button type="button" onClick={submit}>
-            Submit
-          </button>
-        </p>
-      ) : (
-        <p className="muted">This week is {status} and cannot be edited here.</p>
-      )}
+        {!locked ? (
+          <p>
+            <button type="button" className="secondary" onClick={() => setRows((current) => [...current, emptyRow()])}>
+              Add award
+            </button>{" "}
+            <button type="button" onClick={save}>
+              Save
+            </button>{" "}
+            <button type="button" onClick={submit}>
+              Submit
+            </button>
+          </p>
+        ) : (
+          <p className="muted">This week is {status} and cannot be edited here.</p>
+        )}
+      </CollapsibleSection>
       {notice ? <p>{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
     </>

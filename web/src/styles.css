@@ -133,6 +133,56 @@ h2 {
   margin-bottom: 1rem;
 }
 
+.collapsible-section {
+  padding: 0;
+}
+
+.collapsible-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.8rem 1.1rem;
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 650;
+  list-style: none;
+}
+
+.collapsible-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-section > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 0.32rem solid transparent;
+  border-bottom: 0.32rem solid transparent;
+  border-left: 0.45rem solid #1f4b3a;
+  transition: transform 120ms ease;
+}
+
+.collapsible-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.collapsible-section[open] > summary {
+  border-bottom: 1px solid #e6e0d4;
+}
+
+.collapsible-section-body {
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+}
+
+.collapsible-section-body > :first-child {
+  margin-top: 0;
+}
+
+.collapsible-section-body > :last-child {
+  margin-bottom: 0;
+}
+
 label {
   display: block;
   font-size: 0.85rem;
@@ -324,6 +374,14 @@ ol.steps .current {
   .mg-actions,
   .order-arrows {
     display: none;
+  }
+
+  .collapsible-section > summary {
+    display: none;
+  }
+
+  .collapsible-section:not([open]) > .collapsible-section-body {
+    display: block !important;
   }
 
   .app-main {

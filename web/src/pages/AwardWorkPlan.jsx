@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 import { progressColor } from "../progress.js";
 import { WorkGanttChart } from "./WorkGantt.jsx";
 
@@ -151,8 +152,7 @@ export default function AwardWorkPlan({
   }
 
   return (
-    <div className="card">
-      <h2>SOW work plan</h2>
+    <CollapsibleSection title="SOW work plan">
       <p className="muted">
         Track technical requirements separately from contract deliverables and
         timesheet tasks. New rows append at the bottom. Use Up/Down to reorder
@@ -466,6 +466,6 @@ export default function AwardWorkPlan({
         </tbody>
       </table>
       <WorkGanttChart chart={chart} />
-    </div>
+    </CollapsibleSection>
   );
 }

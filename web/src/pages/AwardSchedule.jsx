@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, uploadDocumentFile } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 import { GanttChart } from "./Gantt.jsx";
 
 export default function AwardSchedule({
@@ -184,8 +185,7 @@ export default function AwardSchedule({
   const kinds = scheduleKinds.length ? scheduleKinds : [{ kind_code: "deliverable" }];
 
   return (
-    <div className="card">
-      <h2>Contract schedule</h2>
+    <CollapsibleSection title="Contract schedule">
       <p className="muted">
         Propose a starter plan from the award PoP and optional contract text. Confirm
         what is right. This is not remaining money and not a timesheet task.{" "}
@@ -485,6 +485,6 @@ export default function AwardSchedule({
         </tbody>
       </table>
       <GanttChart chart={chart} />
-    </div>
+    </CollapsibleSection>
   );
 }

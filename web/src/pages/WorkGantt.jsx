@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 import { MonthGantt } from "./MonthGantt.jsx";
 
 export function WorkGanttChart({ chart, title = "SOW work progress" }) {
@@ -78,7 +79,7 @@ export default function WorkGantt() {
         view for monthly reports and presentations.
       </p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="card gantt-toolbar">
+      <CollapsibleSection title="Chart controls" className="gantt-toolbar">
         <form onSubmit={apply} className="row">
           <div>
             <label>Award</label>
@@ -102,8 +103,8 @@ export default function WorkGantt() {
             </button>
           </div>
         </form>
-      </div>
-      <div className="card">
+      </CollapsibleSection>
+      <CollapsibleSection title="SOW work progress chart">
         <WorkGanttChart
           chart={chart}
           title={
@@ -112,7 +113,7 @@ export default function WorkGantt() {
               : "Portfolio SOW work progress"
           }
         />
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

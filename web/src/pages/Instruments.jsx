@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 function dollarsToCents(value) {
   return Math.round(Number(value) * 100);
@@ -140,8 +141,7 @@ export default function Instruments() {
       {notice ? <p>{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
 
-      <div className="card">
-        <h2>New split cost</h2>
+      <CollapsibleSection title="New split cost">
         <form onSubmit={createInstrument}>
           <div className="row">
             <div>
@@ -242,14 +242,18 @@ export default function Instruments() {
             <button type="submit">Create instrument</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
 
       {rows.map((row) => (
-        <div className="card" key={row.instrument_id}>
-          <h2>
+        <CollapsibleSection
+          key={row.instrument_id}
+          title={
+            <>
             {row.short_code}{" "}
             <span className="status">{row.status_code}</span>
-          </h2>
+            </>
+          }
+        >
           <p>
             {row.title} — {formatCents(row.amount_cents)} ({row.category_code})
           </p>
@@ -296,7 +300,7 @@ export default function Instruments() {
               Delete
             </button>
           </p>
-        </div>
+        </CollapsibleSection>
       ))}
     </>
   );

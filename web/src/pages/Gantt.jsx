@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 import { MonthGantt } from "./MonthGantt.jsx";
 
 function GanttChart({ chart, title = "Contract schedule" }) {
@@ -77,7 +78,7 @@ export default function Gantt() {
         behind are as-of the date you pick. Print this page for a snapshot.
       </p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="card gantt-toolbar">
+      <CollapsibleSection title="Chart controls" className="gantt-toolbar">
         <form onSubmit={apply} className="row">
           <div>
             <label>Award</label>
@@ -104,8 +105,8 @@ export default function Gantt() {
         <p className="muted">
           Behind {grouped.behind} · remaining {grouped.remaining} · completed {grouped.completed}
         </p>
-      </div>
-      <div className="card">
+      </CollapsibleSection>
+      <CollapsibleSection title="Contract schedule chart">
         <GanttChart
           chart={chart}
           title={
@@ -124,7 +125,7 @@ export default function Gantt() {
             </li>
           ))}
         </ul>
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

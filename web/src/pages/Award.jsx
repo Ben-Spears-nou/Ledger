@@ -13,6 +13,7 @@ import {
   todayIso,
   uploadDocumentFile,
 } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 function dollarsToCents(value) {
   return Math.round(Number(value) * 100);
@@ -435,7 +436,11 @@ export default function Award() {
       await api(`/awards/${id}/clins/${clin.clin_id}/exercise`, { method: "POST", body: {} });
       setNotice("CLIN exercised. Record a modification below if funded remaining should change.");
       await load();
-      document.getElementById("award-mod")?.scrollIntoView({ behavior: "smooth" });
+      const modificationSection = document.getElementById("award-mod");
+      if (modificationSection) {
+        modificationSection.open = true;
+        modificationSection.scrollIntoView({ behavior: "smooth" });
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -962,8 +967,7 @@ export default function Award() {
       <p>{award.title}</p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
-      <div className="card">
-        <h2>Remaining</h2>
+      <CollapsibleSection title="Remaining">
         <table>
           <tbody>
             <tr>
@@ -1002,10 +1006,9 @@ export default function Award() {
             ) : null}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
       {award.type_code === "FFP" ? (
-        <div className="card">
-          <h2>FFP monthly billing</h2>
+        <CollapsibleSection title="FFP monthly billing">
           <p className="muted">
             Funded contract value is spread across working months anchored to the PoP start.
             Submitted periods stay fixed when a modification changes funding or extends the PoP.
@@ -1048,10 +1051,9 @@ export default function Award() {
               ))}
             </tbody>
           </table>
-        </div>
+        </CollapsibleSection>
       ) : null}
-      <div className="card">
-        <h2>Award header</h2>
+      <CollapsibleSection title="Award header">
         <p className="muted">
           Identity and classification. Money and PoP changes belong on a modification.
           Type can change only before charges or commitments exist.
@@ -1236,9 +1238,8 @@ export default function Award() {
         ) : (
           <p className="muted">This award has posted activity, so it cannot be deleted.</p>
         )}
-      </div>
-      <div className="card">
-        <h2>CLINs</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="CLINs">
         <p className="muted">
           Unexercised options are pipeline money. Exercising drops that figure; it does not
           change funded remaining.
@@ -1320,9 +1321,8 @@ export default function Award() {
             <button type="submit">Add CLIN</button>
           </p>
         </form>
-      </div>
-      <div className="card">
-        <h2>Expected funding</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Expected funding">
         <p className="muted">
           Increments you expect. They are not remaining and not pipeline until you record a
           modification.
@@ -1396,9 +1396,8 @@ export default function Award() {
             <button type="submit">Add expected increment</button>
           </p>
         </form>
-      </div>
-      <div className="card">
-        <h2>Rate policy</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Rate policy">
         <p className="muted">
           A revision is a new dated row. Already-posted charges keep the old stack.
         </p>
@@ -1535,9 +1534,8 @@ export default function Award() {
             <button type="submit">Revise rate policy</button>
           </p>
         </form>
-      </div>
-      <div className="card" id="award-mod">
-        <h2>Record a modification</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Record a modification" id="award-mod">
         <p className="muted">
           New funded amount, PoP, or budget line totals. Prefill is the current award.
         </p>
@@ -1705,10 +1703,9 @@ export default function Award() {
             <button type="submit">Save modification</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
       {alerts.length ? (
-        <div className="card">
-          <h2>Alerts</h2>
+        <CollapsibleSection title="Alerts">
           <ul>
             {alerts.map((row) => (
               <li key={`${row.alert_code}-${row.award_id}`}>
@@ -1718,11 +1715,10 @@ export default function Award() {
               </li>
             ))}
           </ul>
-        </div>
+        </CollapsibleSection>
       ) : null}
       {burn ? (
-        <div className="card">
-          <h2>Burn</h2>
+        <CollapsibleSection title="Burn">
           <p className="muted">
             Daily {formatCents(burn.daily_burn_cents)} · EAC {formatCents(burn.eac_cents)} · runway{" "}
             {burn.runway_days === null || burn.runway_days === undefined
@@ -1746,10 +1742,9 @@ export default function Award() {
               ))}
             </tbody>
           </table>
-        </div>
+        </CollapsibleSection>
       ) : null}
-      <div className="card">
-        <h2>Pipeline</h2>
+      <CollapsibleSection title="Pipeline">
         <p className="muted">Forecast only. This is not remaining to spend.</p>
         <form onSubmit={addPipeline}>
           <div className="row">
@@ -1833,9 +1828,8 @@ export default function Award() {
             ))}
           </tbody>
         </table>
-      </div>
-      <div className="card">
-        <h2>Budget lines</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Budget lines">
         <table>
           <thead>
             <tr>
@@ -1858,10 +1852,9 @@ export default function Award() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Tasks</h2>
+      <CollapsibleSection title="Tasks">
         <table>
           <thead>
             <tr>
@@ -1918,10 +1911,9 @@ export default function Award() {
             <button type="submit">Add task</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Assignments</h2>
+      <CollapsibleSection title="Assignments">
         <table>
           <thead>
             <tr>
@@ -2021,10 +2013,9 @@ export default function Award() {
             <button type="submit">Add assignment</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Purchases</h2>
+      <CollapsibleSection title="Purchases">
         <form onSubmit={addPurchase}>
           <div className="row">
             <div>
@@ -2095,10 +2086,9 @@ export default function Award() {
             <button type="submit">Commit purchase</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Travel</h2>
+      <CollapsibleSection title="Travel">
         <form onSubmit={addTravel}>
           <div className="row">
             <div>
@@ -2171,10 +2161,9 @@ export default function Award() {
             <button type="submit">Commit travel</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Commitments</h2>
+      <CollapsibleSection title="Commitments">
         <table>
           <thead>
             <tr>
@@ -2240,7 +2229,7 @@ export default function Award() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
       <AwardSchedule
         awardId={id}
@@ -2263,8 +2252,7 @@ export default function Award() {
         onNotice={setNotice}
       />
 
-      <div className="card">
-        <h2>Documents</h2>
+      <CollapsibleSection title="Documents">
         <form onSubmit={addDocument}>
           <div className="row">
             <div>
@@ -2366,10 +2354,9 @@ export default function Award() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Compliance</h2>
+      <CollapsibleSection title="Compliance">
         <form onSubmit={addCompliance}>
           <div className="row">
             <div>
@@ -2476,7 +2463,7 @@ export default function Award() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

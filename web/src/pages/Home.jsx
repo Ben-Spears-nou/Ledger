@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Home() {
   const [asOf, setAsOf] = useState(todayIso());
@@ -41,7 +42,7 @@ export default function Home() {
         This week’s decisions. Not email. Close is a checklist, not the books.
       </p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="card">
+      <CollapsibleSection title="View date">
         <form onSubmit={apply}>
           <label>As of</label>
           <input type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} />
@@ -49,10 +50,9 @@ export default function Home() {
             <button type="submit">Show</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
       {close ? (
-        <div className="card">
-          <h2>Close through {close.week_start}</h2>
+        <CollapsibleSection title={`Close through ${close.week_start}`}>
           <p>
             Missing weeks {close.missing_week_count} · drafts {close.draft_count} · submitted{" "}
             {close.submitted_count} · open commitments {close.open_commitment_count}
@@ -60,10 +60,9 @@ export default function Home() {
           <p>
             <Link to="/audit">Charges CSV</Link>
           </p>
-        </div>
+        </CollapsibleSection>
       ) : null}
-      <div className="card">
-        <h2>Missing timesheets</h2>
+      <CollapsibleSection title="Missing timesheets">
         {(home?.missing_weeks || []).length ? (
           <ul>
             {home.missing_weeks.map((row) => (
@@ -76,9 +75,8 @@ export default function Home() {
         ) : (
           <p className="muted">Everyone with a login has submitted or been approved.</p>
         )}
-      </div>
-      <div className="card">
-        <h2>Approvals</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Approvals">
         {(home?.approvals || []).length ? (
           <ul>
             {home.approvals.map((row) => (
@@ -92,9 +90,8 @@ export default function Home() {
         ) : (
           <p className="muted">None waiting.</p>
         )}
-      </div>
-      <div className="card">
-        <h2>Compliance due in 14 days</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Compliance due in 14 days">
         {(home?.compliance_due || []).length ? (
           <table>
             <thead>
@@ -119,9 +116,8 @@ export default function Home() {
         ) : (
           <p className="muted">None due.</p>
         )}
-      </div>
-      <div className="card">
-        <h2>Aging open commitments</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Aging open commitments">
         {(home?.aging_commitments || []).length ? (
           <table>
             <thead>
@@ -148,9 +144,8 @@ export default function Home() {
         ) : (
           <p className="muted">None older than 14 days.</p>
         )}
-      </div>
-      <div className="card">
-        <h2>Portfolio</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Portfolio">
         <p className="muted">
           Remaining and runway as of this date.{" "}
           <Link to="/portfolio">Open the awards table</Link>
@@ -183,7 +178,7 @@ export default function Home() {
         ) : (
           <p className="muted">No awards.</p>
         )}
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents, mondayOnOrBefore, parseDollarsToCents, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 const emptyPersonForm = {
   display_name: "",
@@ -456,8 +457,7 @@ export default function People() {
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
 
-      <div className="card">
-        <h2>New person</h2>
+      <CollapsibleSection title="New person">
         <form onSubmit={addPerson}>
           <div className="row">
             <div>
@@ -629,10 +629,9 @@ export default function People() {
             <button type="submit">Save person</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Roster</h2>
+      <CollapsibleSection title="Roster">
         <table>
           <thead>
             <tr>
@@ -687,10 +686,9 @@ export default function People() {
             })}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Assignments</h2>
+      <CollapsibleSection title="Assignments">
         <table>
           <thead>
             <tr>
@@ -731,10 +729,9 @@ export default function People() {
           </tbody>
         </table>
         {assignments.length === 0 ? <p className="muted">No assignments yet.</p> : null}
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Person facts</h2>
+      <CollapsibleSection title="Person facts">
         <p className="muted">Correct name, email, hire/term, or labor category. Unused people can be deleted.</p>
         {people.length ? (
           <form onSubmit={saveFacts}>
@@ -825,10 +822,9 @@ export default function People() {
         ) : (
           <p className="muted">No people yet.</p>
         )}
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Login</h2>
+      <CollapsibleSection title="Login">
         <p className="muted">
           Reset password, change role, or deactivate. You cannot remove the last active admin.
         </p>
@@ -917,10 +913,9 @@ export default function People() {
         ) : (
           <p className="muted">No logins yet. Create a person with a login above.</p>
         )}
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Set base rate</h2>
+      <CollapsibleSection title="Set base rate">
         <p className="muted">A new row closes the previous open rate. Delete a typo on the row. Posted labor keeps the old row (you will see an error).</p>
         <form onSubmit={addRate}>
           <div className="row">
@@ -1034,9 +1029,9 @@ export default function People() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
+      <CollapsibleSection title="Planned vs capacity">
         <div className="row">
           <div>
             <label htmlFor="cap-week">Week of (Monday)</label>
@@ -1052,7 +1047,6 @@ export default function People() {
             />
           </div>
         </div>
-        <h2>Planned vs capacity</h2>
         <table>
           <thead>
             <tr>
@@ -1073,10 +1067,9 @@ export default function People() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>Set capacity</h2>
+      <CollapsibleSection title="Set capacity">
         <form onSubmit={addCapacity}>
           <div className="row">
             <div>
@@ -1147,10 +1140,9 @@ export default function People() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
 
-      <div className="card">
-        <h2>New assignment</h2>
+      <CollapsibleSection title="New assignment">
         <form onSubmit={addAssignment}>
           <div className="row">
             <div>
@@ -1231,7 +1223,7 @@ export default function People() {
             <button type="submit">Save assignment</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

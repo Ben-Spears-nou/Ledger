@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, clearSession } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Password() {
   const navigate = useNavigate();
@@ -38,7 +39,7 @@ export default function Password() {
         After you save, you will be signed out and must log in again. Changing your password
         does not use the <code>.env</code> file.
       </p>
-      <div className="card" style={{ maxWidth: 420 }}>
+      <CollapsibleSection title="Password form" style={{ maxWidth: 420 }}>
         <form onSubmit={onSubmit}>
           <label htmlFor="current-password">Current password</label>
           <input
@@ -76,7 +77,7 @@ export default function Password() {
             <button type="submit">Save password</button>
           </p>
         </form>
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

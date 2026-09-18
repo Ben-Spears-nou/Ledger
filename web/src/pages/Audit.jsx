@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, downloadChargesCsv } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 function detailText(detail) {
   if (detail === null || detail === undefined || detail === "") {
@@ -100,8 +101,7 @@ export default function Audit() {
       </p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
-      <div className="card">
-        <h2>Charges CSV</h2>
+      <CollapsibleSection title="Charges CSV">
         <div className="row">
           <div>
             <label>Award</label>
@@ -145,7 +145,8 @@ export default function Audit() {
             Download charges CSV
           </button>
         </p>
-        <h2>Event log</h2>
+      </CollapsibleSection>
+      <CollapsibleSection title="Event log">
         <form onSubmit={applyFilters}>
           <div className="row">
             <div>
@@ -231,7 +232,7 @@ export default function Audit() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
     </>
   );
 }

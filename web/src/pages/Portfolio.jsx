@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatCents, todayIso } from "../api.js";
+import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 export default function Portfolio() {
   const [asOf, setAsOf] = useState(todayIso());
@@ -35,7 +36,7 @@ export default function Portfolio() {
         <Link to="/awards/new">New award</Link>
       </p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="card">
+      <CollapsibleSection title="Award portfolio">
         <form onSubmit={apply}>
           <label>As of</label>
           <input type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} />
@@ -74,7 +75,7 @@ export default function Portfolio() {
             ))}
           </tbody>
         </table>
-      </div>
+      </CollapsibleSection>
     </>
   );
 }
