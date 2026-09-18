@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from tests.conftest import auth_header, login
 from tests.test_phase2_time import _award, _employee
 
 from ledger.config import PROJECT_ROOT
+from ledger.services import work_plan
 
 SOW = """\
 Section F - Deliveries or Performance
@@ -29,6 +32,62 @@ To
 def test_alembic_head_includes_work_plan() -> None:
     versions = {path.name for path in (PROJECT_ROOT / "alembic" / "versions").glob("*.py")}
     assert "0010_phase13_work_plan.py" in versions
+
+
+def test_extract_numbered_sow_tasks_with_work_month_ranges() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-09-30",
+        pop_end="2027-09-30",
+    )
+    text = """\
+Schedule of planned tasks
+4.2.1: Kickoff Meeting: Month 1
+4.2.2: Procure Materials: Months 1-3
+W911NF26CA035
+Page 24 of 100
+4.2.14: Assess Shelf-Life of Created NPs: Months 4–24
+"""
+
+    rows = work_plan.extract_requirements(text, award, source_document_id=12)
+
+    assert [row.requirement_code for row in rows] == ["4.2.1", "4.2.2", "4.2.14"]
+    assert [row.title for row in rows] == [
+        "Kickoff Meeting",
+        "Procure Materials",
+        "Assess Shelf-Life of Created NPs",
+    ]
+    assert [row.start_date for row in rows] == [
+        "2026-09-30",
+        "2026-09-30",
+        "2026-12-30",
+    ]
+    assert [row.due_date for row in rows] == [
+        "2026-10-29",
+        "2026-12-29",
+        "2028-09-29",
+    ]
+    assert all(row.source_document_id == 12 for row in rows)
+
+
+def test_extract_timed_tasks_from_text_table_rows() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-09-30",
+        pop_end="2027-09-30",
+    )
+    text = """\
+Task | Task name | Timing
+4.2.1 | Kickoff Meeting | Month 1
+4.2.2\tProcure Materials\tMonths 1-3
+"""
+
+    rows = work_plan.extract_requirements(text, award, source_document_id=None)
+
+    assert [row.requirement_code for row in rows] == ["4.2.1", "4.2.2"]
+    assert [row.title for row in rows] == ["Kickoff Meeting", "Procure Materials"]
+    assert rows[1].start_date == "2026-09-30"
+    assert rows[1].due_date == "2026-12-29"
 
 
 def test_work_plan_propose_confirm_progress_and_gantt(client: TestClient) -> None:

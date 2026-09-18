@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from ledger.schemas.work_plan import (
 )
 from ledger.services.audit import record_event
 from ledger.services.contract_schedule import (
+    _add_months,
     _read_document_text,
     contract_pop_dates,
     require_award,
@@ -30,6 +31,23 @@ from ledger.services.contract_schedule import (
 _REQUIREMENT_HEADING = re.compile(r"(?m)^\s*(\d+\.\d+)\s+([^\n]+?)\s*$")
 _SECTION_START = re.compile(r"(?im)^\s*4\.0\s+REQUIREMENTS(?:\s*\(TASKS\))?.*$")
 _SECTION_END = re.compile(r"(?im)^\s*5\.0\s+")
+_TIMED_TASK = re.compile(
+    r"(?m)^\s*(\d+(?:\.\d+){2,})\s*:\s*(.+?)\s*:\s*"
+    r"(Months?\s*\d+(?:\s*[-–—]\s*\d+)?)\s*$",
+    re.IGNORECASE,
+)
+_MONTH_TIMING = re.compile(
+    r"\bMonths?\s*(\d+)(?:\s*[-–—]\s*(\d+))?\b",
+    re.IGNORECASE,
+)
+_TASK_CODE = re.compile(r"\d+(?:\.\d+){1,}")
+_TABLE_HEADERS = {
+    "task",
+    "tasks",
+    "task name",
+    "what tasks are planned",
+    "schedule of planned tasks",
+}
 
 
 class WorkPlanError(ValueError):
@@ -87,6 +105,96 @@ def list_items(session: Session, award_id: int) -> list[WorkPlanItem]:
     )
 
 
+def _work_month_dates(award_start: date, timing: str) -> tuple[date, date] | None:
+    match = _MONTH_TIMING.search(timing)
+    if match is None:
+        return None
+    first_month = int(match.group(1))
+    last_month = int(match.group(2) or match.group(1))
+    if first_month < 1 or last_month < first_month:
+        return None
+    start = _add_months(award_start, first_month - 1)
+    due = _add_months(award_start, last_month) - timedelta(days=1)
+    return start, due
+
+
+def _text_table_tasks(text: str) -> list[tuple[str | None, str, str]]:
+    """Read pipe- or tab-delimited task rows that contain a work-month range."""
+    tasks: list[tuple[str | None, str, str]] = []
+    for raw_line in text.splitlines():
+        if "|" not in raw_line and "\t" not in raw_line:
+            continue
+        cells = [cell.strip() for cell in re.split(r"\s*(?:\||\t)\s*", raw_line)]
+        cells = [cell for cell in cells if cell]
+        timing = next((cell for cell in cells if _MONTH_TIMING.search(cell)), None)
+        if timing is None:
+            continue
+        code = next((cell for cell in cells if _TASK_CODE.fullmatch(cell)), None)
+        title = next(
+            (
+                cell
+                for cell in cells
+                if cell != timing
+                and cell != code
+                and cell.lower() not in _TABLE_HEADERS
+                and re.search(r"[A-Za-z]", cell)
+            ),
+            None,
+        )
+        if title:
+            tasks.append((code, " ".join(title.split()), timing))
+    return tasks
+
+
+def extract_timed_tasks(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> list[WorkPlanItemOut]:
+    """Extract explicitly timed SOW tasks from lists or textual tables."""
+    parsed: list[tuple[str | None, str, str]] = [
+        (match.group(1), " ".join(match.group(2).split()), match.group(3))
+        for match in _TIMED_TASK.finditer(text)
+    ]
+    if not parsed:
+        parsed = _text_table_tasks(text)
+    if not parsed:
+        return []
+
+    contract_pop = contract_pop_dates(text)
+    award_start = contract_pop[0] if contract_pop else date.fromisoformat(award.pop_start)
+    found: list[WorkPlanItemOut] = []
+    seen: set[tuple[str | None, str]] = set()
+    for code, title, timing in parsed:
+        key = (code, title.lower())
+        if key in seen:
+            continue
+        dates = _work_month_dates(award_start, timing)
+        if dates is None:
+            continue
+        seen.add(key)
+        start, due = dates
+        found.append(
+            WorkPlanItemOut(
+                award_id=award.award_id,
+                requirement_code=code,
+                title=title[:160],
+                start_date=start.isoformat(),
+                due_date=due.isoformat(),
+                percent_complete_bp=0,
+                notes=(
+                    f"Resolved from SOW timing '{timing}' using work month 1 beginning "
+                    f"{award_start.isoformat()}. Review before confirming."
+                ),
+                source_document_id=source_document_id,
+                origin_code="extract",
+                sort_order=len(found) + 1,
+            )
+        )
+    return found
+
+
 def extract_requirements(
     text: str,
     award: Award,
@@ -94,6 +202,14 @@ def extract_requirements(
     source_document_id: int | None,
 ) -> list[WorkPlanItemOut]:
     """Extract top-level numbered SOW requirements and infer sequential windows."""
+    timed = extract_timed_tasks(
+        text,
+        award,
+        source_document_id=source_document_id,
+    )
+    if timed:
+        return timed
+
     start_match = _SECTION_START.search(text)
     section = text[start_match.end() :] if start_match else text
     end_match = _SECTION_END.search(section)
