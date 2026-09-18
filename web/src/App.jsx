@@ -59,8 +59,8 @@ const NAV_GROUPS = [
   {
     label: "Charts",
     items: [
-      { to: "/gantt", text: "Gantt", admin: true },
-      { to: "/work-gantt", text: "Work Gantt", admin: true },
+      { to: "/gantt", text: "Gantt" },
+      { to: "/work-gantt", text: "Work Gantt" },
     ],
   },
   {
@@ -280,21 +280,21 @@ export default function App() {
       <Route
         path="/gantt"
         element={
-          <RequireAdmin>
+          <RequireAuth>
             <Shell>
               <Gantt />
             </Shell>
-          </RequireAdmin>
+          </RequireAuth>
         }
       />
       <Route
         path="/work-gantt"
         element={
-          <RequireAdmin>
+          <RequireAuth>
             <Shell>
               <WorkGantt />
             </Shell>
-          </RequireAdmin>
+          </RequireAuth>
         }
       />
       <Route

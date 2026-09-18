@@ -149,7 +149,9 @@ def test_extract_from_txt_contract_and_gantt_lanes(client: TestClient) -> None:
     bar = next(row for row in completed.json()["bars"] if row["schedule_item_id"] == item_id)
     assert bar["lane"] == "completed"
 
-    assert client.get("/gantt", headers=auth_header(employee)).status_code == 403
+    viewed = client.get("/gantt", headers=auth_header(employee))
+    assert viewed.status_code == 200, viewed.text
+    assert any(row["schedule_item_id"] == item_id for row in viewed.json()["bars"])
     assert (
         client.post(
             f"/awards/{award_id}/schedule/propose",

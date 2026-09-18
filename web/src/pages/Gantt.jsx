@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, todayIso } from "../api.js";
+import { api, getUser, todayIso } from "../api.js";
 import { MonthGantt } from "./MonthGantt.jsx";
 
 function GanttChart({ chart, title = "Contract schedule" }) {
@@ -68,6 +68,7 @@ export default function Gantt() {
     grouped[bar.lane] = (grouped[bar.lane] || 0) + 1;
   }
   const selectedAward = awards.find((award) => String(award.award_id) === awardId);
+  const isAdmin = getUser()?.role_code === "admin";
 
   return (
     <>
@@ -115,14 +116,15 @@ export default function Gantt() {
           }
         />
         <ul>
-          {(chart?.bars || []).map((bar) => (
-            <li key={`link-${bar.schedule_item_id}`}>
-              <Link to={`/awards/${bar.award_id}`}>
-                {bar.award_short_code}: {bar.title}
-              </Link>{" "}
-              ({bar.due_date}, {bar.lane})
-            </li>
-          ))}
+          {(chart?.bars || []).map((bar) => {
+            const label = `${bar.award_short_code}: ${bar.title}`;
+            return (
+              <li key={`link-${bar.schedule_item_id}`}>
+                {isAdmin ? <Link to={`/awards/${bar.award_id}`}>{label}</Link> : label}{" "}
+                ({bar.due_date}, {bar.lane})
+              </li>
+            );
+          })}
         </ul>
       </div>
     </>

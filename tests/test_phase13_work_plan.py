@@ -167,7 +167,17 @@ def test_work_plan_propose_confirm_progress_and_gantt(client: TestClient) -> Non
     assert bar["complete_width_pct"] == 100
 
     employee, _person_id = _employee(client, admin, username="p13employee")
-    assert client.get("/work-gantt", headers=auth_header(employee)).status_code == 403
+    viewed = client.get("/work-gantt", headers=auth_header(employee))
+    assert viewed.status_code == 200, viewed.text
+    assert any(row["work_plan_item_id"] == item_id for row in viewed.json()["bars"])
+    assert (
+        client.post(
+            f"/awards/{award_id}/work-plan/propose",
+            json={},
+            headers=auth_header(employee),
+        ).status_code
+        == 403
+    )
 
 
 def test_confirmed_schedule_row_can_be_edited(client: TestClient) -> None:

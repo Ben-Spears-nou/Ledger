@@ -7,7 +7,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from ledger.api.deps import get_db, require_admin
+from ledger.api.deps import get_current_user, get_db, require_admin
 from ledger.models import UserAccount, WorkPlanItem
 from ledger.schemas.work_plan import (
     WorkGanttOut,
@@ -172,7 +172,7 @@ def get_work_gantt(
     award_id: int | None = Query(default=None),
     as_of: str | None = Query(default=None),
     session: Session = Depends(get_db),
-    _admin: UserAccount = Depends(require_admin),
+    _user: UserAccount = Depends(get_current_user),
 ) -> WorkGanttOut:
     """Portfolio or award work-progress Gantt."""
     try:
@@ -190,7 +190,7 @@ def get_award_work_gantt(
     award_id: int,
     as_of: str | None = Query(default=None),
     session: Session = Depends(get_db),
-    _admin: UserAccount = Depends(require_admin),
+    _user: UserAccount = Depends(get_current_user),
 ) -> WorkGanttOut:
     """One award's work-progress Gantt."""
     try:

@@ -61,7 +61,7 @@ def get_gantt(
     award_id: int | None = Query(default=None),
     as_of: str | None = Query(default=None),
     session: Session = Depends(get_db),
-    _admin: UserAccount = Depends(require_admin),
+    _user: UserAccount = Depends(get_current_user),
 ) -> GanttOut:
     """Computed Gantt for one award or the portfolio."""
     try:
@@ -78,7 +78,7 @@ def get_award_gantt(
     award_id: int,
     as_of: str | None = Query(default=None),
     session: Session = Depends(get_db),
-    _admin: UserAccount = Depends(require_admin),
+    _user: UserAccount = Depends(get_current_user),
 ) -> GanttOut:
     """Gantt for one award."""
     try:
