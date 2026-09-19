@@ -12,8 +12,8 @@ export default function Staffing() {
   const [scenario, setScenario] = useState({
     person_id: "",
     award_id: "",
-    hours_per_week: "8",
-    weeks: "4",
+    hours_per_month: "32",
+    months: "1",
   });
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -62,9 +62,9 @@ export default function Staffing() {
         body: {
           person_id: Number(scenario.person_id),
           award_id: Number(scenario.award_id),
-          hours_per_week: Number(scenario.hours_per_week),
+          hours_per_month: Number(scenario.hours_per_month),
           week_start: weekStart,
-          weeks: Number(scenario.weeks) || 1,
+          months: Number(scenario.months) || 1,
         },
       });
       setResult(data);
@@ -78,8 +78,8 @@ export default function Staffing() {
     <>
       <h1>Staffing</h1>
       <p className="muted">
-        Assignments still do not post. Plan dollars are a preview against remaining personnel and
-        funded.
+        Assignments are monthly and do not post. Weekly assigned hours are working-day
+        projections; plan dollars are a preview against remaining personnel and funded.
       </p>
       {error ? <p className="error">{error}</p> : null}
       {notice ? <p>{notice}</p> : null}
@@ -150,8 +150,9 @@ export default function Staffing() {
               <thead>
                 <tr>
                   <th>Award</th>
-                  <th>Hours</th>
-                  <th>Plan / week</th>
+                  <th>Hours/month</th>
+                  <th>Projected this week</th>
+                  <th>Plan / month</th>
                   <th>Personnel left</th>
                   <th>Funded left</th>
                 </tr>
@@ -163,7 +164,8 @@ export default function Staffing() {
                       <Link to={`/awards/${row.award_id}`}>{row.short_code}</Link>
                       {row.task_short_code ? ` / ${row.task_short_code}` : ""}
                     </td>
-                    <td>{row.hours_per_week}</td>
+                    <td>{row.hours_per_month}</td>
+                    <td>{row.projected_hours}</td>
                     <td>{row.plan_cents == null ? "—" : formatCents(row.plan_cents)}</td>
                     <td>
                       {row.remaining_personnel_cents == null
@@ -266,20 +268,20 @@ export default function Staffing() {
               </select>
             </div>
             <div>
-              <label>Hours / week</label>
+              <label>Hours / month</label>
               <input
-                value={scenario.hours_per_week}
+                value={scenario.hours_per_month}
                 onChange={(event) =>
-                  setScenario((current) => ({ ...current, hours_per_week: event.target.value }))
+                  setScenario((current) => ({ ...current, hours_per_month: event.target.value }))
                 }
               />
             </div>
             <div>
-              <label>Weeks</label>
+              <label>Months</label>
               <input
-                value={scenario.weeks}
+                value={scenario.months}
                 onChange={(event) =>
-                  setScenario((current) => ({ ...current, weeks: event.target.value }))
+                  setScenario((current) => ({ ...current, months: event.target.value }))
                 }
               />
             </div>
@@ -290,7 +292,7 @@ export default function Staffing() {
         </form>
         {result ? (
           <p>
-            {formatCents(result.plan_cents)} over {result.weeks} week(s)
+            {formatCents(result.plan_cents)} over {result.months} month(s)
             {result.personnel_fit === false ? " · over remaining personnel" : ""}
             {result.funded_fit === false ? " · over remaining funded" : ""}
           </p>

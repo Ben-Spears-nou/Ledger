@@ -122,7 +122,7 @@ Posting inserts `charge.source` matching `commitment.kind`. Pipeline and closed 
 | Table | Notes |
 |---|---|
 | `task` | Work package on one award (D22). `status_code` `open`/`closed`. Unique `(award_id, short_code)` |
-| `assignment` | Dated planned hours/week for a person on an award, optional task (D23). Prefill only |
+| `assignment` | Dated planned hours/month for a person on an award, optional task (D23). Informational; weekly staffing is projected |
 | `person_capacity` | Dated available hours/week (D24). Zero allowed. Not a timesheet constraint |
 
 Assignment and capacity hours are integer hundredths of an hour, like

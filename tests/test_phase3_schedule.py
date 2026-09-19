@@ -34,7 +34,7 @@ def _assign(
     body: dict[str, object] = {
         "person_id": person_id,
         "award_id": award_id,
-        "hours_per_week": hours,
+        "hours_per_month": hours,
         "effective_from": effective_from,
     }
     if task_id is not None:
@@ -150,7 +150,7 @@ def test_employee_cannot_see_another_persons_assignments_or_capacity(client: Tes
     assert own.json()[0]["person_id"] == sam_id
 
 
-def test_first_get_prefills_from_assignments_without_dollars(client: TestClient) -> None:
+def test_first_get_shows_monthly_plan_without_inventing_time(client: TestClient) -> None:
     admin = login(client)
     award_a = _award(
         client, admin, short_code="T3C", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
@@ -166,7 +166,7 @@ def test_first_get_prefills_from_assignments_without_dollars(client: TestClient)
         person_id=alex_id,
         award_id=award_a["award_id"],
         task_id=task["task_id"],
-        hours=8,
+        hours=32,
         effective_from="2026-03-01",
     )
     _assign(
@@ -174,7 +174,7 @@ def test_first_get_prefills_from_assignments_without_dollars(client: TestClient)
         admin,
         person_id=alex_id,
         award_id=award_b["award_id"],
-        hours=4,
+        hours=16,
         effective_from="2026-03-01",
     )
 
@@ -183,17 +183,16 @@ def test_first_get_prefills_from_assignments_without_dollars(client: TestClient)
     payload = week.json()
     assert "amount_cents" not in payload
     assert "loaded_rate_cents" not in str(payload)
-    lines = payload["lines"]
-    assert len(lines) == 2
-    by_award = {line["award_id"]: line for line in lines}
-    assert by_award[award_a["award_id"]]["hours"] == 8
-    assert by_award[award_a["award_id"]]["task_id"] == task["task_id"]
-    assert by_award[award_a["award_id"]]["work_date"] == "2026-03-02"
-    assert by_award[award_b["award_id"]]["hours"] == 4
-    assert by_award[award_b["award_id"]]["task_id"] is None
+    assert payload["lines"] == []
+    plans = {row["award_id"]: row for row in payload["planned"]}
+    assert plans[award_a["award_id"]]["hours_per_month"] == 32
+    assert plans[award_a["award_id"]]["task_id"] == task["task_id"]
+    assert plans[award_a["award_id"]]["month_start"] == "2026-03-01"
+    assert plans[award_b["award_id"]]["hours_per_month"] == 16
+    assert plans[award_b["award_id"]]["remaining_hours"] == 16
 
 
-def test_saved_week_is_not_rewritten_when_assignments_change(client: TestClient) -> None:
+def test_saved_week_is_not_rewritten_when_monthly_assignments_change(client: TestClient) -> None:
     admin = login(client)
     award = _award(
         client, admin, short_code="T3E", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
@@ -204,12 +203,12 @@ def test_saved_week_is_not_rewritten_when_assignments_change(client: TestClient)
         admin,
         person_id=alex_id,
         award_id=award["award_id"],
-        hours=8,
+        hours=32,
         effective_from="2026-03-01",
     )
     first = client.get("/me/week", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
     assert first.status_code == 200
-    assert first.json()["lines"][0]["hours"] == 8
+    assert first.json()["lines"] == []
     saved = _put_week(
         client,
         alex,
@@ -222,11 +221,43 @@ def test_saved_week_is_not_rewritten_when_assignments_change(client: TestClient)
         admin,
         person_id=alex_id,
         award_id=award["award_id"],
-        hours=40,
+        hours=80,
         effective_from="2026-03-02",
     )
     again = client.get("/me/week", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
     assert again.json()["lines"][0]["hours"] == 3
+
+
+def test_cross_month_week_reports_each_month_and_counts_work_dates(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client, admin, short_code="T3M", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
+    )
+    alex, alex_id = _employee(client, admin)
+    _assign(
+        client,
+        admin,
+        person_id=alex_id,
+        award_id=award["award_id"],
+        hours=22,
+        effective_from="2026-03-01",
+    )
+    _put_week(
+        client,
+        alex,
+        "2026-03-30",
+        [
+            {"work_date": "2026-03-31", "hours": 2, "award_id": award["award_id"]},
+            {"work_date": "2026-04-01", "hours": 3, "award_id": award["award_id"]},
+        ],
+    )
+    week = client.get("/me/week", params={"week_start": "2026-03-30"}, headers=auth_header(alex))
+    plans = {row["month_start"]: row for row in week.json()["planned"]}
+    assert set(plans) == {"2026-03-01", "2026-04-01"}
+    assert plans["2026-03-01"]["logged_hours"] == 2
+    assert plans["2026-03-01"]["remaining_hours"] == 20
+    assert plans["2026-04-01"]["logged_hours"] == 3
+    assert plans["2026-04-01"]["remaining_hours"] == 19
 
 
 def test_submit_need_not_match_plan_and_assignments_do_not_post(client: TestClient) -> None:
@@ -395,14 +426,14 @@ def test_capacity_revision_is_a_new_row_and_over_capacity_does_not_block(
         admin,
         person_id=alex_id,
         award_id=award["award_id"],
-        hours=40,
+        hours=88,
         effective_from="2026-03-01",
     )
     week = client.get("/capacity", params={"week_start": "2026-03-02"}, headers=auth_header(admin))
     assert week.status_code == 200
     alex_row = next(row for row in week.json() if row["person_id"] == alex_id)
     assert alex_row["capacity_hours"] == 10
-    assert alex_row["planned_hours"] == 40
+    assert alex_row["planned_hours"] == 20
     assert alex_row["over_capacity"] is True
 
     saved = _put_week(

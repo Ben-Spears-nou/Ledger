@@ -61,7 +61,7 @@ def test_staffing_overload_scenario_and_utilization(client: TestClient) -> None:
             json={
                 "person_id": person_id,
                 "award_id": award["award_id"],
-                "hours_per_week": 8,
+                "hours_per_month": 44,
                 "effective_from": "2026-03-02",
             },
             headers=headers,
@@ -75,7 +75,7 @@ def test_staffing_overload_scenario_and_utilization(client: TestClient) -> None:
     person = next(row for row in board.json()["people"] if row["person_id"] == person_id)
     assert person["overload"] is True
     week = person["weeks"][0]
-    assert week["assigned_hours"] == 16
+    assert week["assigned_hours"] == 20
     assert week["capacity_hours"] == 10
     assert any(row["person_id"] == person_id for row in board.json()["utilization"])
 
@@ -84,15 +84,15 @@ def test_staffing_overload_scenario_and_utilization(client: TestClient) -> None:
         json={
             "person_id": person_id,
             "award_id": a1["award_id"],
-            "hours_per_week": 5,
+            "hours_per_month": 20,
             "week_start": "2026-03-02",
-            "weeks": 2,
+            "months": 2,
         },
         headers=headers,
     )
     assert scenario.status_code == 200, scenario.text
     assert scenario.json()["plan_cents"] is not None
-    assert scenario.json()["plan_cents"] == scenario.json()["plan_cents_per_week"] * 2
+    assert scenario.json()["plan_cents"] == scenario.json()["plan_cents_per_month"] * 2
     listed = client.get("/assignments", params={"person_id": person_id}, headers=headers)
     assert len(listed.json()) == 2
 
@@ -131,7 +131,7 @@ def test_cpff_still_blocks_funded_ffp_warns_assignment_warns(client: TestClient)
         json={
             "person_id": person_id,
             "award_id": ffp["award_id"],
-            "hours_per_week": 1,
+            "hours_per_month": 1,
             "effective_from": "2026-03-09",
         },
         headers=headers,
@@ -145,10 +145,10 @@ def test_cpff_still_blocks_funded_ffp_warns_assignment_warns(client: TestClient)
     client.post("/me/week/submit", params={"week_start": "2026-03-09"}, headers=auth_header(alex))
     queued = client.get(f"/approvals/{week2['timesheet_period_id']}", headers=headers)
     assert queued.status_code == 200
-    assert any("exceeds assigned" in item for item in queued.json()["warnings"])
+    assert any("exceeds monthly assignment" in item for item in queued.json()["warnings"])
     approved = client.post(f"/approvals/{week2['timesheet_period_id']}/approve", headers=headers)
     assert approved.status_code == 200, approved.text
-    assert any("exceeds assigned" in item for item in approved.json()["warnings"])
+    assert any("exceeds monthly assignment" in item for item in approved.json()["warnings"])
 
 
 def test_funding_expectation_not_remaining_and_search(client: TestClient) -> None:
@@ -214,7 +214,7 @@ def test_d18_and_my_week_planned_hours_have_no_dollars(client: TestClient) -> No
         json={
             "person_id": person_id,
             "award_id": award["award_id"],
-            "hours_per_week": 6,
+            "hours_per_month": 24,
             "effective_from": "2026-03-02",
         },
         headers=headers,
@@ -224,7 +224,8 @@ def test_d18_and_my_week_planned_hours_have_no_dollars(client: TestClient) -> No
     body = week.json()
     assert "amount_cents" not in body
     assert all("amount_cents" not in line for line in body["lines"])
-    assert body["planned"][0]["hours_per_week"] == 6
+    assert body["planned"][0]["hours_per_month"] == 24
+    assert body["planned"][0]["remaining_hours"] == 24
     assert "plan_cents" not in body["planned"][0]
     card = client.get(f"/awards/{award['award_id']}", headers=auth_header(alex))
     assert card.status_code == 200

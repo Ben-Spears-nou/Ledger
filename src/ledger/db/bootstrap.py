@@ -158,6 +158,24 @@ def ensure_phase15_schema(connection: Connection) -> None:
         )
 
 
+def ensure_monthly_assignment_schema(connection: Connection) -> None:
+    """Add monthly assignment hours and convert legacy weekly plans."""
+    columns = _column_names(connection, "assignment")
+    if not columns:
+        return
+    if "hours_hundredths_per_month" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE assignment ADD COLUMN "
+            "hours_hundredths_per_month INTEGER NOT NULL DEFAULT 0"
+        )
+    connection.exec_driver_sql(
+        "UPDATE assignment SET hours_hundredths_per_month = "
+        "MAX(1, ROUND(hours_hundredths_per_week * 52.0 / 12.0)) "
+        "WHERE hours_hundredths_per_month = 0 "
+        "AND hours_hundredths_per_week IS NOT NULL"
+    )
+
+
 def dedupe_budget_lines(connection: Connection) -> None:
     """Collapse repeated budget rows so the Phase 14 unique indexes can be built.
 
@@ -241,6 +259,7 @@ def apply_schema_sql(connection: Connection, script: str) -> int:
     ensure_phase3_schema(connection)
     ensure_phase10_schema(connection)
     ensure_phase15_schema(connection)
+    ensure_monthly_assignment_schema(connection)
     for statement in seeds:
         connection.exec_driver_sql(as_idempotent_seed(statement))
         seeded += 1

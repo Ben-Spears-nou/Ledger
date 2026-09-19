@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 from tasks import TASKS
 
 import ledger
 from ledger.api.main import app
 from ledger.config import PROJECT_ROOT, Settings, get_settings
-from ledger.db.bootstrap import init_database
+from ledger.db.bootstrap import ensure_monthly_assignment_schema, init_database
 
 
 @pytest.fixture
@@ -123,3 +124,22 @@ def test_bootstrap_applies_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert path.stat().st_size > 0
     get_settings.cache_clear()
     get_engine.cache_clear()
+
+
+def test_bootstrap_converts_legacy_weekly_assignments_to_monthly(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{(tmp_path / 'legacy.db').as_posix()}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE assignment ("
+            "assignment_id INTEGER PRIMARY KEY, "
+            "hours_hundredths_per_week INTEGER NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO assignment (hours_hundredths_per_week) VALUES (600)"
+        )
+        ensure_monthly_assignment_schema(connection)
+        row = connection.exec_driver_sql(
+            "SELECT hours_hundredths_per_week, hours_hundredths_per_month "
+            "FROM assignment"
+        ).one()
+    assert tuple(row) == (600, 2600)

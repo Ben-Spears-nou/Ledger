@@ -185,6 +185,7 @@ export default function MyWeek() {
       setStatus(week.status_code);
       setReturnComment(week.return_comment || "");
       setRows(rowsFromLines(week.lines, week.week_start));
+      setPlanned(week.planned || []);
       setNotice("Saved.");
     } catch (err) {
       setError(err.message);
@@ -245,25 +246,16 @@ export default function MyWeek() {
         </div>
         {planned.length ? (
           <div>
-            <p className="muted">Planned this week (hours only):</p>
+            <p className="muted">Monthly plan progress (hours only):</p>
             <ul>
               {planned.map((row) => {
                 const award = awards.find((item) => item.award_id === row.award_id);
-                const logged = rows
-                  .filter(
-                    (item) =>
-                      Number(item.award_id) === row.award_id &&
-                      (row.task_id ? Number(item.task_id) === row.task_id : !item.task_id),
-                  )
-                  .reduce(
-                    (sum, item) =>
-                      sum + item.hours.reduce((rowSum, hours) => rowSum + (Number(hours) || 0), 0),
-                    0,
-                  );
                 return (
-                  <li key={`${row.award_id}-${row.task_id || "a"}`}>
-                    {award ? award.short_code : `award ${row.award_id}`}: planned {row.hours_per_week}
-                    h, logged {roundHours(logged)}h
+                  <li key={`${row.month_start}-${row.award_id}-${row.task_id || "a"}`}>
+                    {row.month_start.slice(0, 7)} ·{" "}
+                    {award ? award.short_code : `award ${row.award_id}`}: planned{" "}
+                    {row.hours_per_month}h, logged {row.logged_hours}h, remaining{" "}
+                    {row.remaining_hours}h
                   </li>
                 );
               })}

@@ -48,8 +48,8 @@ export default function People() {
     person_id: "",
     award_id: "",
     task_id: "",
-    hours_per_week: "",
-    effective_from: todayIso(),
+    hours_per_month: "",
+    effective_from: `${todayIso().slice(0, 7)}-01`,
   });
   const [loginForm, setLoginForm] = useState({
     person_id: "",
@@ -309,7 +309,7 @@ export default function People() {
       const body = {
         person_id: Number(assignForm.person_id),
         award_id: Number(assignForm.award_id),
-        hours_per_week: Number(assignForm.hours_per_week),
+        hours_per_month: Number(assignForm.hours_per_month),
         effective_from: assignForm.effective_from,
       };
       if (assignForm.task_id) {
@@ -1225,14 +1225,14 @@ export default function People() {
               </select>
             </div>
             <div>
-              <label>Hours / week</label>
+              <label>Hours / month</label>
               <input
                 type="number"
                 min="0.5"
                 step="0.5"
-                value={assignForm.hours_per_week}
+                value={assignForm.hours_per_month}
                 onChange={(event) =>
-                  setAssignForm((current) => ({ ...current, hours_per_week: event.target.value }))
+                  setAssignForm((current) => ({ ...current, hours_per_month: event.target.value }))
                 }
               />
             </div>

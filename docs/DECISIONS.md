@@ -346,24 +346,26 @@ Proposed tables/columns (Phase 3 freeze; ask before adding more):
 
 ---
 
-## D23 — Assignments propose a week; they do not post
+## D23 — Assignments set a monthly plan; they do not post
 
-An assignment is dated planned hours for one person on one award
-(optional task). It prefills a **newly created** empty draft week (D7).
-It does not insert `charge` rows, auto-submit, or rewrite a week the
-employee already has.
+An assignment is dated planned hours per calendar month for one person on one
+award (optional task). It does not insert `charge` rows, auto-submit, prefill
+worked hours, or rewrite a week the employee already has.
 
-If an assignment overlaps any day of the calendar week, prefill the
-**full** `hours_hundredths_per_week` on Monday (`week_start`). No daily
-proration. Multiple assignments → multiple lines.
+My week shows monthly planned, logged, and remaining hours. Employees place
+their actual hours on the days worked. A week crossing a month boundary shows
+each month separately, and each timesheet line counts toward the month of its
+`work_date`.
 
-Submit does not have to match the plan (D10). Planned vs actual is an
-admin hours view, not a validation rule.
+Weekly staffing projections prorate monthly hours over the working weekdays in
+each calendar month. Submit does not have to match the plan (D10). Approval
+warns when cumulative logged hours exceed the monthly assignment; it does not
+block.
 
 Proposed table:
 
 - `assignment` — `assignment_id`, `person_id`, `award_id`, `task_id`
-  (nullable), `hours_hundredths_per_week`, `effective_from`, `effective_to`,
+  (nullable), `hours_hundredths_per_month`, `effective_from`, `effective_to`,
   `created_at`, `created_by`
 
 Revisions are new rows (D5). Audit `assignment_create` (D19).
@@ -679,18 +681,19 @@ included).
 ## D41 — Staffing is a forward view; assignments still do not post
 
 Admin `GET /staffing?week_start=&weeks=` (default 8, max 12) compares
-capacity, assigned hours, and logged hours per person per week. Slack
-and overload are informational. Plan dollars use the current rate stack
+weekly capacity, projected assignment hours, and logged hours per person per
+week. Monthly assignments are prorated by working weekdays for this projection.
+Slack and overload are informational. Plan dollars use the current rate stack
 as-of that Monday (preview, not a charge) and are compared to remaining
-personnel and remaining funded. Hours by task vs assignment travel with
-the same payload.
+personnel and remaining funded. Hours by task vs assignment travel with the
+same payload.
 
-`POST /staffing/scenario` answers “what if this person works N hours/week
-on this award” for a window. It does not write rows.
+`POST /staffing/scenario` answers “what if this person works N hours/month
+on this award” for a number of months. It does not write rows.
 
 Utilization is hours by `time_code` (award vs `ird`/`bp`/`pto`/`holiday`),
-not payroll. Included on staffing. Employees 403. D7 still: assignments
-prefill; they do not post.
+not payroll. Included on staffing. Employees 403. Assignments guide time entry;
+they do not prefill or post worked hours.
 
 ---
 

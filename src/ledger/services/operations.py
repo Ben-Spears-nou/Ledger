@@ -48,7 +48,11 @@ from ledger.services.awards import line_remaining_map, remaining_for
 from ledger.services.burn import award_burn, list_alerts
 from ledger.services.schedule import (
     as_of_capacity,
+    legacy_weekly_hundredths,
+    monthly_hundredths_from_input,
     overlapping_assignments,
+    projected_assignment_for_month,
+    projected_assignment_for_week,
 )
 from ledger.services.time import (
     amount_cents_for,
@@ -127,6 +131,35 @@ def _logged_hundredths(
     return int(session.scalar(stmt) or 0)
 
 
+def _logged_month_hundredths(
+    session: Session,
+    person_id: int,
+    month_start: str,
+    *,
+    award_id: int,
+    task_id: int | None,
+) -> int:
+    """Logged award/task hours whose work date falls in one calendar month."""
+    start = date.fromisoformat(month_start)
+    next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    stmt = (
+        select(func.coalesce(func.sum(TimesheetLine.hours_hundredths), 0))
+        .join(
+            TimesheetPeriod,
+            TimesheetPeriod.timesheet_period_id == TimesheetLine.timesheet_period_id,
+        )
+        .where(
+            TimesheetPeriod.person_id == person_id,
+            TimesheetLine.award_id == award_id,
+            TimesheetLine.work_date >= start.isoformat(),
+            TimesheetLine.work_date < next_month.isoformat(),
+        )
+    )
+    if task_id is not None:
+        stmt = stmt.where(TimesheetLine.task_id == task_id)
+    return int(session.scalar(stmt) or 0)
+
+
 def _logged_by_code(session: Session, person_id: int, week_starts: list[str]) -> dict[str, int]:
     totals: dict[str, int] = {}
     periods = session.scalars(
@@ -181,16 +214,55 @@ def plan_cents_for(
 def planned_hours_for_week(
     session: Session, person_id: int, week_start: str
 ) -> list[PlannedHoursOut]:
-    """Employee-visible assignment hours. No dollars."""
+    """Employee-visible monthly assignment progress. No dollars."""
     monday = week_start_on_or_before(week_start)
-    return [
-        PlannedHoursOut(
-            award_id=row.award_id,
-            task_id=row.task_id,
-            hours_per_week=hundredths_to_hours(row.hours_hundredths_per_week),
+    first_day = date.fromisoformat(monday)
+    month_starts = sorted(
+        {
+            (first_day + timedelta(days=offset)).replace(day=1).isoformat()
+            for offset in range(7)
+        }
+    )
+    totals: dict[tuple[int, int | None, str], list[int]] = {}
+    legacy: dict[tuple[int, int | None, str], int | None] = {}
+    for row in overlapping_assignments(session, person_id, monday):
+        for month_start in month_starts:
+            planned = projected_assignment_for_month(row, month_start)
+            if planned <= 0:
+                continue
+            key = (row.award_id, row.task_id, month_start)
+            totals.setdefault(key, [0, 0])[0] += planned
+            legacy[key] = row.hours_hundredths_per_week
+    result: list[PlannedHoursOut] = []
+    ordered = sorted(
+        totals.items(),
+        key=lambda item: (item[0][2], item[0][0], item[0][1] or 0),
+    )
+    for (award_id, task_id, month_start), values in ordered:
+        planned = values[0]
+        logged = _logged_month_hundredths(
+            session,
+            person_id,
+            month_start,
+            award_id=award_id,
+            task_id=task_id,
         )
-        for row in overlapping_assignments(session, person_id, monday)
-    ]
+        result.append(
+            PlannedHoursOut(
+                award_id=award_id,
+                task_id=task_id,
+                month_start=month_start,
+                hours_per_month=hundredths_to_hours(planned),
+                logged_hours=hundredths_to_hours(logged),
+                remaining_hours=hundredths_to_hours(planned - logged),
+                hours_per_week=(
+                    hundredths_to_hours(legacy[(award_id, task_id, month_start)])
+                    if legacy[(award_id, task_id, month_start)] is not None
+                    else None
+                ),
+            )
+        )
+    return result
 
 
 def serialize_funding(row) -> FundingExpectationOut:
@@ -426,7 +498,7 @@ def staffing_board(session: Session, *, week_start: str | None, weeks: int) -> S
             capacity_h = hundredths_to_hours(cap.hours_hundredths_per_week) if cap else 0.0
             assigned_h = hundredths_to_hours(
                 sum(
-                    row.hours_hundredths_per_week
+                    projected_assignment_for_week(row, week)
                     for row in overlapping_assignments(session, person.person_id, week)
                 )
             )
@@ -453,8 +525,9 @@ def staffing_board(session: Session, *, week_start: str | None, weeks: int) -> S
             if award is None:
                 continue
             task = session.get(Task, row.task_id) if row.task_id else None
+            projected = projected_assignment_for_week(row, monday)
             loaded, plan = plan_cents_for(
-                session, person, award, row.hours_hundredths_per_week, monday
+                session, person, award, row.hours_hundredths_per_month, monday
             )
             del loaded
             personnel = _personnel_remaining_cents(session, award)
@@ -466,7 +539,13 @@ def staffing_board(session: Session, *, week_start: str | None, weeks: int) -> S
                     short_code=award.short_code,
                     task_id=row.task_id,
                     task_short_code=task.short_code if task else None,
-                    hours_per_week=hundredths_to_hours(row.hours_hundredths_per_week),
+                    hours_per_month=hundredths_to_hours(row.hours_hundredths_per_month),
+                    projected_hours=hundredths_to_hours(projected),
+                    hours_per_week=(
+                        hundredths_to_hours(row.hours_hundredths_per_week)
+                        if row.hours_hundredths_per_week is not None
+                        else None
+                    ),
                     plan_cents=plan,
                     remaining_personnel_cents=personnel,
                     remaining_funded_cents=funded,
@@ -479,7 +558,7 @@ def staffing_board(session: Session, *, week_start: str | None, weeks: int) -> S
         for row in overlapping_assignments(session, person.person_id, monday):
             key = (row.award_id, row.task_id)
             assigned, logged = task_hours.get(key, [0, 0])
-            assigned += row.hours_hundredths_per_week
+            assigned += projected_assignment_for_week(row, monday)
             task_hours[key] = [assigned, logged]
         period = _period_for(session, person.person_id, monday)
         if period is not None:
@@ -540,10 +619,14 @@ def staffing_board(session: Session, *, week_start: str | None, weeks: int) -> S
 
 
 def staffing_scenario(session: Session, payload: StaffingScenarioIn) -> StaffingScenarioOut:
-    """Preview loaded cost of hypothetical hours. Does not write."""
-    weeks = payload.weeks
-    if weeks < 1 or weeks > MAX_STAFFING_WEEKS:
-        raise OperationsError(f"weeks must be 1–{MAX_STAFFING_WEEKS}")
+    """Preview loaded cost of hypothetical monthly hours. Does not write."""
+    payload_data = payload.model_dump()
+    monthly_input = payload_data.get("hours_per_month")
+    weekly_input = payload_data.get("hours_per_week")
+    legacy_request = monthly_input is None and weekly_input is not None
+    months = payload.months or 1
+    if months < 1 or months > 12:
+        raise OperationsError("months must be 1–12")
     monday = week_start_on_or_before(payload.week_start or datetime.now(UTC).date().isoformat())
     person = session.get(Person, payload.person_id)
     award = session.get(Award, payload.award_id)
@@ -551,26 +634,43 @@ def staffing_scenario(session: Session, payload: StaffingScenarioIn) -> Staffing
         raise OperationsError("person not found")
     if award is None:
         raise OperationsError("award not found")
-    from ledger.services.schedule import hours_per_week_to_hundredths
-
-    hundredths = hours_per_week_to_hundredths(payload.hours_per_week)
-    loaded, per_week = plan_cents_for(session, person, award, hundredths, monday)
-    total = None if per_week is None else per_week * weeks
+    try:
+        hundredths = monthly_hundredths_from_input(
+            monthly_input, weekly_input
+        )
+    except ValueError as exc:
+        raise OperationsError(str(exc)) from exc
+    loaded, per_month = plan_cents_for(session, person, award, hundredths, monday)
+    total = None if per_month is None else per_month * months
+    legacy_weekly = (
+        weekly_input
+        if legacy_request
+        else hundredths_to_hours(legacy_weekly_hundredths(hundredths))
+    )
+    legacy_weeks = payload.weeks if legacy_request else None
+    legacy_per_week = None
+    if legacy_request and loaded is not None:
+        legacy_hundredths = round(float(weekly_input) * 100)
+        legacy_per_week = amount_cents_for(legacy_hundredths, loaded)
+        total = None if legacy_per_week is None else legacy_per_week * (payload.weeks or 1)
     personnel = _personnel_remaining_cents(session, award)
     remaining = remaining_for(session, award.award_id)
     funded = remaining.remaining_funded_cents if remaining else None
     return StaffingScenarioOut(
         person_id=person.person_id,
         award_id=award.award_id,
-        hours_per_week=payload.hours_per_week,
-        weeks=weeks,
+        hours_per_month=hundredths_to_hours(hundredths),
+        months=months,
         loaded_rate_cents=loaded,
-        plan_cents_per_week=per_week,
+        plan_cents_per_month=per_month,
         plan_cents=total,
         remaining_personnel_cents=personnel,
         remaining_funded_cents=funded,
         personnel_fit=None if total is None or personnel is None else total <= personnel,
         funded_fit=None if total is None or funded is None else total <= funded,
+        hours_per_week=legacy_weekly,
+        weeks=legacy_weeks,
+        plan_cents_per_week=legacy_per_week,
     )
 
 

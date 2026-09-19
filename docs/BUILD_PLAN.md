@@ -316,7 +316,7 @@ only to the HTTP API (`localhost:5173` → `:8000`). No Phase 3–7 routes.
 
 ---
 
-## Phase 3 — Tasks, assignments, capacity, My week prefill
+## Phase 3 — Tasks, monthly assignments, capacity, My week planning
 
 Schedule proposes; the timesheet records (D7). Do not build Phase 4–7 here.
 
@@ -359,12 +359,12 @@ person_capacity
 ### Assignments
 
 - Admin assigns a person to an award, optional task, date range, and
-  **planned hours per week** (`hours_hundredths_per_week`).
+  **planned hours per month** (`hours_hundredths_per_month`).
 - Revisions are new rows; close the previous open row for the same
   person + award + task (D5 pattern). Do not edit posted charges.
-- Overlap with a week: `effective_from <= week_end` and
-  (`effective_to` is null or `>= week_start`). If it overlaps at all, the
-  full weekly hours prefill — do not prorate (D23).
+- Monthly hours are prorated over calendar-month working weekdays when a
+  weekly staffing projection is needed. Weeks crossing month boundaries use
+  each month's applicable share.
 - Cannot assign to a `closed` award or `closed` task.
 - Employee `GET /assignments` is **own rows only**. Admin lists all.
   Payload is hours + award/task ids, not dollars.
@@ -375,18 +375,18 @@ person_capacity
   `person_rate`. Zero is allowed (unassigned / leave). Revisions close the
   previous open row.
 - Admin `GET /capacity?week_start=` returns, per person with a login:
-  capacity hours, planned hours (sum of overlapping assignment weeks),
-  and `over_capacity` (planned > capacity). Informational only (D10, D24).
+  capacity hours, projected planned hours (monthly plans prorated to the week),
+  and `over_capacity` (projected plan > capacity). Informational only (D10, D24).
 - Employees cannot read `/capacity` or another person's capacity rows.
 
-### My week prefill (D7, D10)
+### My week monthly plan (D7, D10)
 
-- `GET /me/week` on a **newly created** empty draft copies overlapping
-  assignments into lines: `time_code=award`, `award_id`, optional `task_id`,
-  `work_date=week_start` (Monday), hours = that assignment’s weekly hours.
-- Skip closed awards/tasks. Skip assignments that do not overlap.
-- **Do not** prefill when the period already existed (employee cleared
-  lines, or already saved). **Do not** auto-submit or auto-post charges.
+- `GET /me/week` shows monthly planned, logged, and remaining hours for
+  overlapping assignments. It does not create timesheet lines or invent a
+  work date.
+- A week crossing a month boundary shows both months. Each actual line counts
+  toward the month containing its `work_date`.
+- **Do not** auto-submit or auto-post charges.
 - Employee may edit, delete, add PTO, or submit 0 / 3 / 60 hours. Submit
   must not require matching assignments.
 - `PUT /me/week` accepts optional `task_id`. Extra unknown fields stay
@@ -396,7 +396,7 @@ person_capacity
 
 ### API / UI (minimum)
 
-- `/me/week` — optional task select (filtered by selected award); prefill.
+- `/me/week` — optional task select (filtered by selected award); monthly plan progress.
 - `/awards/:id` — admin: tasks and assignments for this award.
 - `/people` — admin: dated capacity, assignments, planned vs capacity for
   a week. Base-rate POST remains the existing `/people/{id}/rates` API
@@ -411,12 +411,11 @@ person_capacity
   DTOs; `GET /awards` employee card keys are **unchanged** (D18).
 - Employee cannot `POST` tasks, assignments, or capacity (403).
 - Employee A cannot `GET` employee B’s assignments or capacity.
-- Empty first `GET /me/week` for a week covered by an assignment prefills
-  hours + award + task; a second assignment on another award adds a second
-  line; dollars are absent from the payload.
+- Empty first `GET /me/week` for a week covered by an assignment leaves time
+  lines empty and shows monthly plans for each award/task; dollars are absent.
 - Saving a week, then changing assignments, does **not** rewrite the saved
   week on the next GET.
-- Employee can submit a week that ignores the prefill (different hours or
+- Employee can submit a week that differs from the monthly plan (different hours or
   awards). Approve still posts labor $ from the award policy (D11), not
   from planned hours. Assignments never insert `charge` rows.
 - Closed award / closed task reject new assignments and new time lines.

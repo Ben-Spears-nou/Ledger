@@ -178,8 +178,8 @@ export default function Award() {
   const [assignForm, setAssignForm] = useState({
     person_id: "",
     task_id: "",
-    hours_per_week: "",
-    effective_from: todayIso(),
+    hours_per_month: "",
+    effective_from: `${todayIso().slice(0, 7)}-01`,
   });
   const [purchaseForm, setPurchaseForm] = useState({
     category_code: "equipment",
@@ -666,7 +666,7 @@ export default function Award() {
       const body = {
         person_id: Number(assignForm.person_id),
         award_id: Number(id),
-        hours_per_week: Number(assignForm.hours_per_week),
+        hours_per_month: Number(assignForm.hours_per_month),
         effective_from: assignForm.effective_from,
       };
       if (assignForm.task_id) {
@@ -1919,7 +1919,7 @@ export default function Award() {
             <tr>
               <th>Person</th>
               <th>Task</th>
-              <th>Hours/week</th>
+              <th>Hours/month</th>
               <th>From</th>
               <th>To</th>
               <th></th>
@@ -1933,7 +1933,7 @@ export default function Award() {
                 <tr key={row.assignment_id}>
                   <td>{person ? person.display_name : row.person_id}</td>
                   <td>{task ? task.short_code : "—"}</td>
-                  <td>{row.hours_per_week}</td>
+                  <td>{row.hours_per_month}</td>
                   <td>{row.effective_from}</td>
                   <td>{row.effective_to || "open"}</td>
                   <td className="actions">
@@ -1987,14 +1987,14 @@ export default function Award() {
               </select>
             </div>
             <div>
-              <label>Hours / week</label>
+              <label>Hours / month</label>
               <input
                 type="number"
                 min="0.5"
                 step="0.5"
-                value={assignForm.hours_per_week}
+                value={assignForm.hours_per_month}
                 onChange={(event) =>
-                  setAssignForm((current) => ({ ...current, hours_per_week: event.target.value }))
+                  setAssignForm((current) => ({ ...current, hours_per_month: event.target.value }))
                 }
               />
             </div>

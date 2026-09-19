@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ledger.models import (
@@ -448,7 +448,7 @@ def _existing_labor_charge(session: Session, line_id: int) -> Charge | None:
 
 def approve_warnings(session: Session, period: TimesheetPeriod) -> list[str]:
     """Informational approve messages (D43). Never used on employee submit."""
-    from ledger.services.schedule import overlapping_assignments
+    from ledger.services.schedule import assigned_hundredths_for_month
 
     person = session.get(Person, period.person_id)
     if person is None:
@@ -456,33 +456,56 @@ def approve_warnings(session: Session, period: TimesheetPeriod) -> list[str]:
     lines = session.scalars(
         select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
     ).all()
-    hours_by_award: dict[int, int] = {}
+    month_keys: set[tuple[int, str]] = set()
     extras: dict[int, int] = {}
     for line in lines:
         code = _time_code_row(session, line.time_code)
         if not code.consumes_award or line.award_id is None:
             continue
-        hours_by_award[line.award_id] = hours_by_award.get(line.award_id, 0) + line.hours_hundredths
+        month_keys.add((line.award_id, line.work_date[:7] + "-01"))
         try:
             preview = preview_labor_line(session, person, line)
         except TimeError:
             continue
         extras[line.award_id] = extras.get(line.award_id, 0) + preview.amount_cents
-    assigned: dict[int, int] = {}
-    for row in overlapping_assignments(session, period.person_id, period.week_start):
-        assigned[row.award_id] = assigned.get(row.award_id, 0) + row.hours_hundredths_per_week
     warnings: list[str] = []
-    for award_id, hundredths in hours_by_award.items():
+    for award_id, month_start in sorted(month_keys):
         award = session.get(Award, award_id)
         if award is None:
             continue
-        planned = assigned.get(award_id, 0)
-        if hundredths > planned + 1:
-            warnings.append(
-                f"{award.short_code}: logged {hundredths_to_hours(hundredths)}h exceeds "
-                f"assigned {hundredths_to_hours(planned)}h"
+        next_month = (
+            date.fromisoformat(month_start).replace(day=28) + timedelta(days=4)
+        ).replace(day=1)
+        logged = int(
+            session.scalar(
+                select(func.coalesce(func.sum(TimesheetLine.hours_hundredths), 0))
+                .join(
+                    TimesheetPeriod,
+                    TimesheetPeriod.timesheet_period_id
+                    == TimesheetLine.timesheet_period_id,
+                )
+                .where(
+                    TimesheetPeriod.person_id == period.person_id,
+                    TimesheetLine.award_id == award_id,
+                    TimesheetLine.work_date >= month_start,
+                    TimesheetLine.work_date < next_month.isoformat(),
+                )
             )
-        extra = extras.get(award_id, 0)
+            or 0
+        )
+        planned = assigned_hundredths_for_month(
+            session, period.person_id, award_id, month_start
+        )
+        if logged > planned + 1:
+            warnings.append(
+                f"{award.short_code}: {month_start[:7]} logged "
+                f"{hundredths_to_hours(logged)}h exceeds monthly assignment "
+                f"{hundredths_to_hours(planned)}h"
+            )
+    for award_id, extra in extras.items():
+        award = session.get(Award, award_id)
+        if award is None:
+            continue
         remaining = remaining_for(session, award_id)
         if remaining is None:
             continue

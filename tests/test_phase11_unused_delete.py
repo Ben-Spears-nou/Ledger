@@ -42,7 +42,7 @@ def test_alembic_head_unchanged_and_lookups(client: TestClient) -> None:
     assert "0010_phase13_work_plan.py" in versions
 
 
-def test_assignment_delete_reopens_predecessor_and_omits_from_prefill(
+def test_monthly_assignment_delete_reopens_predecessor_without_prefill(
     client: TestClient,
 ) -> None:
     admin = login(client)
@@ -56,7 +56,7 @@ def test_assignment_delete_reopens_predecessor_and_omits_from_prefill(
         json={
             "person_id": person_id,
             "award_id": award["award_id"],
-            "hours_per_week": 8,
+            "hours_per_month": 44,
             "effective_from": "2026-01-01",
         },
         headers=headers,
@@ -67,7 +67,7 @@ def test_assignment_delete_reopens_predecessor_and_omits_from_prefill(
         json={
             "person_id": person_id,
             "award_id": award["award_id"],
-            "hours_per_week": 4,
+            "hours_per_month": 22,
             "effective_from": "2026-03-02",
         },
         headers=headers,
@@ -79,27 +79,27 @@ def test_assignment_delete_reopens_predecessor_and_omits_from_prefill(
 
     ended = client.patch(
         f"/assignments/{first.json()['assignment_id']}",
-        json={"hours_per_week": 6},
+        json={"hours_per_month": 33},
         headers=headers,
     )
     assert ended.status_code == 200, ended.text
-    assert ended.json()["hours_per_week"] == 6
+    assert ended.json()["hours_per_month"] == 33
 
     removed = client.delete(f"/assignments/{second.json()['assignment_id']}", headers=headers)
     assert removed.status_code == 204, removed.text
     reopened = client.get("/assignments", params={"person_id": person_id}, headers=headers)
     assert len(reopened.json()) == 1
     assert reopened.json()[0]["effective_to"] is None
-    assert reopened.json()[0]["hours_per_week"] == 6
+    assert reopened.json()[0]["hours_per_month"] == 33
 
     capacity = client.get("/capacity", params={"week_start": "2026-03-02"}, headers=headers)
     row = next(item for item in capacity.json() if item["person_id"] == person_id)
-    assert row["planned_hours"] == 6
+    assert row["planned_hours"] == 7.5
 
     week = client.get("/me/week", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
     assert week.status_code == 200, week.text
-    assert week.json()["lines"][0]["hours"] == 6
-    assert all(line["hours"] != 4 for line in week.json()["lines"])
+    assert week.json()["lines"] == []
+    assert week.json()["planned"][0]["hours_per_month"] == 33
 
 
 def test_unused_rate_delete_reopens_consumed_rate_is_409(client: TestClient) -> None:

@@ -6,11 +6,15 @@ from pydantic import BaseModel, Field
 
 
 class PlannedHoursOut(BaseModel):
-    """Employee-visible assignment hours for one week. No dollars."""
+    """Employee-visible monthly assignment progress. No dollars."""
 
     award_id: int
     task_id: int | None = None
-    hours_per_week: float
+    month_start: str
+    hours_per_month: float
+    logged_hours: float
+    remaining_hours: float
+    hours_per_week: float | None = Field(default=None, deprecated=True)
 
 
 class MissingWeekOut(BaseModel):
@@ -109,13 +113,15 @@ class StaffingWeekOut(BaseModel):
 
 
 class StaffingAssignmentOut(BaseModel):
-    """Plan vs remaining for one assignment overlapping the first week."""
+    """Monthly plan vs remaining for an assignment overlapping the first week."""
 
     award_id: int
     short_code: str
     task_id: int | None = None
     task_short_code: str | None = None
-    hours_per_week: float
+    hours_per_month: float
+    projected_hours: float
+    hours_per_week: float | None = Field(default=None, deprecated=True)
     plan_cents: int | None = None
     remaining_personnel_cents: int | None = None
     remaining_funded_cents: int | None = None
@@ -166,13 +172,15 @@ class StaffingOut(BaseModel):
 
 
 class StaffingScenarioIn(BaseModel):
-    """What-if hours. Does not persist."""
+    """What-if monthly hours. Does not persist."""
 
     person_id: int
     award_id: int
-    hours_per_week: float = Field(gt=0)
+    hours_per_month: float | None = Field(default=None, gt=0)
+    months: int | None = Field(default=None, ge=1, le=12)
+    hours_per_week: float | None = Field(default=None, gt=0, deprecated=True)
     week_start: str | None = None
-    weeks: int = Field(default=1, ge=1, le=12)
+    weeks: int | None = Field(default=None, ge=1, le=12, deprecated=True)
 
 
 class StaffingScenarioOut(BaseModel):
@@ -180,15 +188,18 @@ class StaffingScenarioOut(BaseModel):
 
     person_id: int
     award_id: int
-    hours_per_week: float
-    weeks: int
+    hours_per_month: float
+    months: int
     loaded_rate_cents: int | None = None
-    plan_cents_per_week: int | None = None
+    plan_cents_per_month: int | None = None
     plan_cents: int | None = None
     remaining_personnel_cents: int | None = None
     remaining_funded_cents: int | None = None
     personnel_fit: bool | None = None
     funded_fit: bool | None = None
+    hours_per_week: float | None = Field(default=None, deprecated=True)
+    weeks: int | None = Field(default=None, deprecated=True)
+    plan_cents_per_week: int | None = Field(default=None, deprecated=True)
 
 
 class SearchHitOut(BaseModel):
