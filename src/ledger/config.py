@@ -20,6 +20,18 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
 DEFAULT_SECRET_KEY = "dev-only-change-me"
 """Shipped HMAC secret. Warn (do not crash) when this is still in use."""
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
+
+
+def is_loopback_host(host: str) -> bool:
+    """True when the bind address is this computer only (D28)."""
+    return host.strip().lower() in _LOOPBACK_HOSTS
+
+
+def lan_bind_blocked_by_default_secret(host: str, secret_key: str) -> bool:
+    """True when a non-loopback bind must be refused (shipped HMAC still set)."""
+    return (not is_loopback_host(host)) and secret_key == DEFAULT_SECRET_KEY
+
 
 def platform_data_dir() -> Path:
     """Local disk directory for SQLite and other runtime files.

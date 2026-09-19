@@ -1,0 +1,1173 @@
+"""Propose, confirm, and chart contract schedule rows (D47, D48)."""
+
+from __future__ import annotations
+
+import calendar
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+
+from docx import Document as WordDocument
+from docx.opc.exceptions import PackageNotFoundError
+from pypdf import PdfReader
+from pypdf.errors import FileNotDecryptedError, PdfReadError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ledger.models import Award, Document
+from ledger.models.contract_schedule import ScheduleItem, ScheduleKind
+from ledger.models.documents import ComplianceStatus
+from ledger.schemas.contract_schedule import (
+    GanttBarOut,
+    GanttOut,
+    ScheduleConfirmIn,
+    ScheduleDraftIn,
+    ScheduleItemOut,
+    SchedulePatch,
+    ScheduleProposeIn,
+    ScheduleProposeOut,
+)
+from ledger.services.audit import record_event
+from ledger.services.documents import stored_path
+
+EXTRACTABLE_EXT = frozenset({".txt", ".csv", ".docx", ".pdf"})
+_KEYWORD = re.compile(
+    r"deliverable|milestone|due|report|cdrl|\bsow\b|statement of work",
+    re.IGNORECASE,
+)
+_ISO = re.compile(r"\b((?:19|20)\d{2}-\d{2}-\d{2})\b")
+_US = re.compile(r"\b([A-Za-z]+)\s+(\d{1,2}),\s*((?:19|20)\d{2})\b")
+_NUMERIC = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-]((?:19|20)\d{2})\b")
+_DAY_MONTH = re.compile(r"\b(\d{1,2})[\s-]+([A-Za-z]+)[\s,-]+((?:19|20)\d{2})\b")
+_MONTH_YEAR = re.compile(r"\b([A-Za-z]+)\s+((?:19|20)\d{2})\b")
+_RELATIVE_MONTH = re.compile(
+    r"\b(?:month\s*(\d+)|(\d+)\s*months?\s*(?:after|from)\s*"
+    r"(?:award|award start|start|kickoff))\b",
+    re.IGNORECASE,
+)
+_RELATIVE_MONTH_RANGE = re.compile(
+    r"\bmonths?\s*(\d+)\s*[-–—]\s*(\d+)\b",
+    re.IGNORECASE,
+)
+_CONTRACT_POP = re.compile(
+    r"Period\s+of\s+Performance\s+From\s+"
+    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})\s+"
+    r"(?:[A-Z0-9-]+\s+Page\s+\d+\s+of\s+\d+\s+)?To\s+"
+    r"(\d{1,2}\s+[A-Za-z]{3,9}\s+(?:19|20)\d{2})",
+    re.IGNORECASE,
+)
+_CLIN_LINE = re.compile(r"(?m)^\s*(\d{4})\b([^\n]*)$")
+_SCHEDULE_CONTEXT = re.compile(
+    r"period\s+of\s+performance|deliver(?:y|ies)|schedule\s+of\s+planned\s+tasks",
+    re.IGNORECASE,
+)
+_CDRL_MARKER = re.compile(r"(?im)^\s*1\.\s*DATA ITEM NO\.\s*$")
+_DAC = re.compile(r"\b(\d+)\s*DAC\b", re.IGNORECASE)
+_MONTHS = {
+    **{calendar.month_name[i].lower(): i for i in range(1, 13)},
+    **{calendar.month_abbr[i].lower(): i for i in range(1, 13)},
+}
+
+
+class ScheduleTrackError(ValueError):
+    """Domain error for contract schedule."""
+
+
+@dataclass(frozen=True)
+class _CdrlTiming:
+    suffix: str
+    start: date
+    due: date
+    due_rule: str
+    start_rule: str
+
+
+def _iso_date(value: str, *, field: str) -> str:
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise ScheduleTrackError(f"{field} must be YYYY-MM-DD") from exc
+
+
+def _parse_date(value: str) -> date:
+    return date.fromisoformat(_iso_date(value, field="date"))
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
+def require_award(session: Session, award_id: int) -> Award:
+    """Load an award or raise."""
+    award = session.get(Award, award_id)
+    if award is None:
+        raise ScheduleTrackError("award not found")
+    return award
+
+
+def require_kind(session: Session, kind_code: str) -> str:
+    """Validate schedule_kind."""
+    row = session.get(ScheduleKind, kind_code)
+    if row is None:
+        raise ScheduleTrackError("unknown schedule kind")
+    return kind_code
+
+
+def require_status(session: Session, status_code: str) -> str:
+    """Reuse compliance_status."""
+    row = session.get(ComplianceStatus, status_code)
+    if row is None:
+        raise ScheduleTrackError("unknown status")
+    return status_code
+
+
+def serialize_item(row: ScheduleItem) -> ScheduleItemOut:
+    """API shape for a stored row."""
+    return ScheduleItemOut(
+        schedule_item_id=row.schedule_item_id,
+        award_id=row.award_id,
+        kind_code=row.kind_code,
+        title=row.title,
+        start_date=row.start_date,
+        due_date=row.due_date,
+        status_code=row.status_code,
+        notes=row.notes,
+        completed_at=row.completed_at,
+        source_document_id=row.source_document_id,
+        origin_code=row.origin_code,
+        created_at=row.created_at,
+    )
+
+
+def list_schedule(session: Session, award_id: int) -> list[ScheduleItem]:
+    """Items on one award, due date then id."""
+    return list(
+        session.scalars(
+            select(ScheduleItem)
+            .where(ScheduleItem.award_id == award_id)
+            .order_by(ScheduleItem.due_date, ScheduleItem.schedule_item_id)
+        )
+    )
+
+
+def _lerp(start: date, end: date, numerator: int, denominator: int) -> date:
+    span = (end - start).days
+    return start + timedelta(days=span * numerator // denominator)
+
+
+def _draft(
+    award: Award,
+    *,
+    kind_code: str,
+    title: str,
+    start: date | None,
+    due: date,
+    origin_code: str,
+    notes: str | None = None,
+    source_document_id: int | None = None,
+) -> ScheduleItemOut:
+    return ScheduleItemOut(
+        award_id=award.award_id,
+        kind_code=kind_code,
+        title=title,
+        start_date=start.isoformat() if start else None,
+        due_date=due.isoformat(),
+        status_code="open",
+        notes=notes,
+        completed_at=None,
+        source_document_id=source_document_id,
+        origin_code=origin_code,
+    )
+
+
+def template_drafts(award: Award) -> list[ScheduleItemOut]:
+    """Starter rows from PoP and phase (D47)."""
+    start = _parse_date(award.pop_start)
+    end = _parse_date(award.pop_end)
+    items = [
+        _draft(
+            award,
+            kind_code="milestone",
+            title="Kickoff",
+            start=start,
+            due=start,
+            origin_code="template",
+        ),
+        _draft(
+            award,
+            kind_code="pop",
+            title="Period of performance",
+            start=start,
+            due=end,
+            origin_code="template",
+        ),
+    ]
+    phase = award.phase_code
+    if phase == "I":
+        items.append(
+            _draft(
+                award,
+                kind_code="report",
+                title="Interim technical report",
+                start=start,
+                due=_lerp(start, end, 1, 2),
+                origin_code="template",
+            )
+        )
+        items.append(
+            _draft(
+                award,
+                kind_code="deliverable",
+                title="Final technical report / deliverable",
+                start=start,
+                due=end,
+                origin_code="template",
+            )
+        )
+    elif phase in {"II", "IIB"}:
+        for num, label in (
+            (1, "Q1 progress report"),
+            (2, "Mid-period review"),
+            (3, "Q3 progress report"),
+        ):
+            items.append(
+                _draft(
+                    award,
+                    kind_code="report",
+                    title=label,
+                    start=start,
+                    due=_lerp(start, end, num, 4),
+                    origin_code="template",
+                )
+            )
+        items.append(
+            _draft(
+                award,
+                kind_code="deliverable",
+                title="Final report / deliverable",
+                start=start,
+                due=end,
+                origin_code="template",
+            )
+        )
+    else:
+        items.append(
+            _draft(
+                award,
+                kind_code="report",
+                title="Mid-period report",
+                start=start,
+                due=_lerp(start, end, 1, 2),
+                origin_code="template",
+            )
+        )
+        items.append(
+            _draft(
+                award,
+                kind_code="deliverable",
+                title="Final deliverable",
+                start=start,
+                due=end,
+                origin_code="template",
+            )
+        )
+    return items
+
+
+def _us_date(month_name: str, day: str, year: str) -> date | None:
+    month = _MONTHS.get(month_name.lower())
+    if month is None:
+        return None
+    try:
+        return date(int(year), month, int(day))
+    except ValueError:
+        return None
+
+
+def _add_months(value: date, months: int) -> date:
+    """Add calendar months, clamping the day to the target month."""
+    month_index = value.year * 12 + value.month - 1 + months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _written_date(value: str) -> date | None:
+    match = re.fullmatch(
+        r"\s*(\d{1,2})\s+([A-Za-z]{3,9})\s+((?:19|20)\d{2})\s*",
+        value,
+    )
+    if match is None:
+        return None
+    return _us_date(match.group(2), match.group(1), match.group(3))
+
+
+def contract_pop_dates(text: str) -> tuple[date, date] | None:
+    """Read the full span of Section F ``Period of Performance`` ranges."""
+    ranges: list[tuple[date, date]] = []
+    for match in _CONTRACT_POP.finditer(text):
+        start = _written_date(match.group(1))
+        end = _written_date(match.group(2))
+        if start is not None and end is not None and end >= start:
+            ranges.append((start, end))
+    if not ranges:
+        return None
+    return min(start for start, _ in ranges), max(end for _, end in ranges)
+
+
+def _dates_in_line(line: str, award: Award) -> list[date]:
+    """Recognize common absolute and award-relative contract dates."""
+    dates: list[date] = []
+    spans: list[tuple[int, int]] = []
+
+    def add(parsed: date | None, span: tuple[int, int]) -> None:
+        overlaps = any(span[0] < existing[1] and span[1] > existing[0] for existing in spans)
+        if parsed is not None and not overlaps:
+            dates.append(parsed)
+            spans.append(span)
+
+    for match in _ISO.finditer(line):
+        try:
+            add(date.fromisoformat(match.group(1)), match.span())
+        except ValueError:
+            continue
+    for match in _US.finditer(line):
+        add(_us_date(match.group(1), match.group(2), match.group(3)), match.span())
+    for match in _NUMERIC.finditer(line):
+        try:
+            add(date(int(match.group(3)), int(match.group(1)), int(match.group(2))), match.span())
+        except ValueError:
+            continue
+    for match in _DAY_MONTH.finditer(line):
+        add(_us_date(match.group(2), match.group(1), match.group(3)), match.span())
+    for match in _MONTH_YEAR.finditer(line):
+        month = _MONTHS.get(match.group(1).lower())
+        if month is not None:
+            year = int(match.group(2))
+            add(date(year, month, calendar.monthrange(year, month)[1]), match.span())
+    award_start = _parse_date(award.pop_start)
+    for match in _RELATIVE_MONTH_RANGE.finditer(line):
+        first_month = int(match.group(1))
+        last_month = int(match.group(2))
+        if first_month < 1 or last_month < first_month:
+            continue
+        start = _add_months(award_start, first_month - 1)
+        due = _add_months(award_start, last_month) - timedelta(days=1)
+        add(start, match.span())
+        # Preserve both boundaries even though they originate from one text span.
+        dates.append(due)
+    for match in _RELATIVE_MONTH.finditer(line):
+        count = int(match.group(1) or match.group(2))
+        add(_add_months(award_start, count), match.span())
+    return dates
+
+
+def _clin_titles(text: str) -> dict[str, str]:
+    """Collect concise CLIN titles from Section B-style line-item headings."""
+    titles: dict[str, str] = {}
+    markers = list(_CLIN_LINE.finditer(text))
+    for index, match in enumerate(markers):
+        suffix = " ".join(match.group(2).split())
+        if re.match(r"^\d+\s+Each\b", suffix, re.IGNORECASE):
+            block_end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+            following = [
+                " ".join(line.split())
+                for line in text[match.end() : block_end].splitlines()[:10]
+                if line.strip()
+            ]
+            suffix = next(
+                (
+                    line
+                    for line in following
+                    if re.search(r"\breport\b|\bdeliverable\b|\boption\b", line, re.IGNORECASE)
+                ),
+                "",
+            )
+        if not suffix:
+            continue
+        title = suffix.split("--", 1)[0].strip(" :-")
+        if title and not re.fullmatch(
+            r"(?:Inspection and Acceptance Location|Both)",
+            title,
+            re.IGNORECASE,
+        ):
+            titles.setdefault(match.group(1), title[:120])
+    return titles
+
+
+def extract_clin_schedule(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> list[ScheduleItemOut]:
+    """Extract CLIN performance windows from contract-writing-system PDFs."""
+    markers = list(_CLIN_LINE.finditer(text))
+    titles = _clin_titles(text)
+    found: list[ScheduleItemOut] = []
+    seen: set[tuple[str, date, date]] = set()
+    for index, marker in enumerate(markers):
+        block_end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        block = text[marker.start() : block_end]
+        pop_match = _CONTRACT_POP.search(block)
+        if pop_match is None:
+            continue
+        start = _written_date(pop_match.group(1))
+        due = _written_date(pop_match.group(2))
+        clin = marker.group(1)
+        if start is None or due is None or due < start or (clin, start, due) in seen:
+            continue
+        seen.add((clin, start, due))
+        title = titles.get(clin, "")
+        row_title = f"CLIN {clin}" + (f" — {title}" if title else "")
+        found.append(
+            _draft(
+                award,
+                kind_code=_schedule_kind(title),
+                title=row_title,
+                start=start,
+                due=due,
+                origin_code="extract",
+                notes="Extracted from the CLIN period of performance in Section F.",
+                source_document_id=source_document_id,
+            )
+        )
+    return found
+
+
+def _cdrl_blocks(text: str) -> list[str]:
+    markers = list(_CDRL_MARKER.finditer(text))
+    return [
+        text[marker.start() : markers[index + 1].start() if index + 1 < len(markers) else None]
+        for index, marker in enumerate(markers)
+    ]
+
+
+def _field_after(block: str, heading: str) -> str | None:
+    lines = [line.strip() for line in block.splitlines()]
+    heading_upper = heading.upper()
+    for index, line in enumerate(lines):
+        if line.upper() != heading_upper:
+            continue
+        for value in lines[index + 1 :]:
+            if value:
+                return value
+    return None
+
+
+def _remarks(block: str) -> str:
+    match = re.search(r"(?im)^\s*16\.\s*REMARKS\s*$", block)
+    if match is None:
+        return ""
+    remarks = block[match.end() :]
+    stop = re.search(
+        r"(?im)^\s*(?:15\.TOTAL|17\.\s*PRICE GROUP|G\.\s*PREPARED BY)\b",
+        remarks,
+    )
+    return remarks[: stop.start() if stop else None]
+
+
+def _schedule_kind(title: str) -> str:
+    if re.search(r"\breport\b", title, re.IGNORECASE):
+        return "report"
+    if re.search(r"\breview\b|\bmeeting\b|\bteleconference\b", title, re.IGNORECASE):
+        return "milestone"
+    return "deliverable"
+
+
+def _monthly_dates(first: date, end: date, *, subsequent_day: int | None) -> list[date]:
+    dates = [first]
+    cursor = _add_months(first.replace(day=1), 1)
+    while cursor <= end:
+        day = subsequent_day or min(first.day, calendar.monthrange(cursor.year, cursor.month)[1])
+        due = cursor.replace(day=min(day, calendar.monthrange(cursor.year, cursor.month)[1]))
+        if due <= end:
+            dates.append(due)
+        cursor = _add_months(cursor, 1)
+    return dates
+
+
+def _interval_dates(first: date, end: date, months: int) -> list[date]:
+    dates: list[date] = []
+    due = first
+    while due <= end:
+        dates.append(due)
+        due = _add_months(due, months)
+    return dates
+
+
+def _series_timings(
+    dates: list[date],
+    *,
+    contract_start: date,
+    suffix: Callable[[int], str],
+    due_rule: Callable[[int], str],
+) -> list[_CdrlTiming]:
+    """Make contiguous inferred work windows from an ordered due-date series."""
+    return [
+        _CdrlTiming(
+            suffix=suffix(index),
+            start=contract_start if index == 1 else dates[index - 2],
+            due=due,
+            due_rule=due_rule(index),
+            start_rule="contract PoP start" if index == 1 else "previous submission due date",
+        )
+        for index, due in enumerate(dates, start=1)
+    ]
+
+
+def _cdrl_due_dates(
+    *,
+    title: str,
+    frequency: str,
+    first_submission: str,
+    remarks: str,
+    contract_start: date,
+    contract_end: date,
+) -> list[_CdrlTiming]:
+    """Resolve common DD 1423 DAC/EOC/frequency rules into dated rows."""
+    title_lower = title.lower()
+    frequency_lower = frequency.lower()
+    remarks_flat = " ".join(remarks.split())
+    first: date | None = None
+    first_rule = first_submission
+    dac = _DAC.search(first_submission)
+    if dac:
+        days = int(dac.group(1))
+        first = contract_start + timedelta(days=days)
+        first_rule = f"{days} DAC"
+    elif re.search(r"\bEOC\b|end of (?:the )?(?:contract|POP)\b", first_submission, re.IGNORECASE):
+        first = contract_end
+        first_rule = "EOC"
+    else:
+        absolute = _written_date(first_submission)
+        if absolute is not None:
+            first = absolute
+
+    if "final report" in title_lower:
+        before = re.search(
+            r"(?:\((\d+)\)|(\d+))\s+days?\s+before\s+(?:the\s+)?end\s+of\s+(?:the\s+)?POP",
+            remarks_flat,
+            re.IGNORECASE,
+        )
+        rows: list[_CdrlTiming] = []
+        if before:
+            days = int(before.group(1) or before.group(2))
+            draft_due = contract_end - timedelta(days=days)
+            rows.append(
+                _CdrlTiming(
+                    suffix="Draft",
+                    start=draft_due,
+                    due=draft_due,
+                    due_rule=f"{days} days before EOC",
+                    start_rule="point deliverable",
+                )
+            )
+        if re.search(r"final report.+?end of (?:the )?POP", remarks_flat, re.IGNORECASE):
+            rows.append(
+                _CdrlTiming(
+                    suffix="Final",
+                    start=rows[-1].due if rows else contract_end,
+                    due=contract_end,
+                    due_rule="EOC",
+                    start_rule="draft due date" if rows else "point deliverable",
+                )
+            )
+        if rows:
+            return rows
+
+    if "reporting of subject inventions" in title_lower:
+        dates: list[date] = []
+        due = _add_months(contract_start, 12)
+        while due <= contract_end:
+            dates.append(due)
+            due = _add_months(due, 12)
+        rows = _series_timings(
+            dates,
+            contract_start=contract_start,
+            suffix=lambda index: f"Annual {index}",
+            due_rule=lambda _index: "every 12 months after award",
+        )
+        if re.search(r"final report", remarks_flat, re.IGNORECASE):
+            rows.append(
+                _CdrlTiming(
+                    suffix="Final",
+                    start=rows[-1].due if rows else contract_start,
+                    due=contract_end,
+                    due_rule="EOC",
+                    start_rule=(
+                        "previous annual submission due date" if rows else "contract PoP start"
+                    ),
+                )
+            )
+        return rows
+
+    if first is None:
+        return []
+    if "monthly" in frequency_lower:
+        subsequent_day = (
+            15
+            if re.search(r"15 days after (?:the )?end of each month", remarks_flat, re.IGNORECASE)
+            else None
+        )
+        dates = _monthly_dates(first, contract_end, subsequent_day=subsequent_day)
+        return _series_timings(
+            dates,
+            contract_start=contract_start,
+            suffix=lambda index: f"Submission {index}",
+            due_rule=lambda index: first_rule if index == 1 else "monthly",
+        )
+    interval = re.search(r"every\s+(\d+)\s+months?", frequency, re.IGNORECASE)
+    if interval:
+        months = int(interval.group(1))
+        return _series_timings(
+            _interval_dates(first, contract_end, months),
+            contract_start=contract_start,
+            suffix=lambda index: f"Review {index}",
+            due_rule=lambda _index: f"every {months} months",
+        )
+    if re.search(r"updated quarterly", remarks_flat, re.IGNORECASE):
+        return _series_timings(
+            _interval_dates(first, contract_end, 3),
+            contract_start=contract_start,
+            suffix=lambda index: "Baseline" if index == 1 else f"Quarterly update {index - 1}",
+            due_rule=lambda index: first_rule if index == 1 else "quarterly",
+        )
+    inferred_start = contract_start if dac else first
+    return [
+        _CdrlTiming(
+            suffix="",
+            start=inferred_start,
+            due=first,
+            due_rule=first_rule,
+            start_rule="contract PoP start" if dac else "point deliverable",
+        )
+    ]
+
+
+def extract_cdrl_schedule(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> list[ScheduleItemOut]:
+    """Extract DD Form 1423 rows, resolving DAC/EOC against contract PoP."""
+    blocks = _cdrl_blocks(text)
+    if not blocks:
+        return []
+    contract_pop = contract_pop_dates(text)
+    contract_start = contract_pop[0] if contract_pop else _parse_date(award.pop_start)
+    contract_end = (
+        contract_pop[1] if contract_pop else _parse_date(getattr(award, "pop_end", award.pop_start))
+    )
+    found: list[ScheduleItemOut] = []
+    seen_items: set[str] = set()
+    for block in blocks:
+        item_no = _field_after(block, "1. DATA ITEM NO.")
+        title = _field_after(block, "2. TITLE OF DATA ITEM")
+        if (
+            item_no is None
+            or title is None
+            or not re.fullmatch(r"[A-Z]\d{3}", item_no, re.IGNORECASE)
+            or item_no.upper() in seen_items
+        ):
+            continue
+        seen_items.add(item_no.upper())
+        frequency = _field_after(block, "10. FREQUENCY") or ""
+        first_submission = _field_after(block, "12. DATE OF FIRST SUBMISSION") or ""
+        for timing in _cdrl_due_dates(
+            title=title,
+            frequency=frequency,
+            first_submission=first_submission,
+            remarks=_remarks(block),
+            contract_start=contract_start,
+            contract_end=contract_end,
+        ):
+            row_title = f"{item_no.upper()} {title}"
+            if timing.suffix:
+                row_title = f"{row_title} — {timing.suffix}"
+            found.append(
+                _draft(
+                    award,
+                    kind_code=_schedule_kind(title),
+                    title=row_title,
+                    start=timing.start,
+                    due=timing.due,
+                    origin_code="extract",
+                    notes=(
+                        f"Resolved from DD Form 1423 ({timing.due_rule}) using contract PoP "
+                        f"{contract_start.isoformat()} to {contract_end.isoformat()}. "
+                        f"Start inferred from {timing.start_rule}."
+                    ),
+                    source_document_id=source_document_id,
+                )
+            )
+    return found
+
+
+def _contract_pop_draft(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> ScheduleItemOut | None:
+    contract_pop = contract_pop_dates(text)
+    if contract_pop is None:
+        return None
+    start, end = contract_pop
+    return _draft(
+        award,
+        kind_code="pop",
+        title="Contract period of performance",
+        start=start,
+        due=end,
+        origin_code="extract",
+        notes="Extracted from Section F of the contract.",
+        source_document_id=source_document_id,
+    )
+
+
+def extract_dated_lines(
+    text: str,
+    award: Award,
+    *,
+    source_document_id: int | None,
+) -> list[ScheduleItemOut]:
+    """Heuristic dated deliverable/milestone lines from contract text."""
+    cdrl_rows = extract_cdrl_schedule(
+        text,
+        award,
+        source_document_id=source_document_id,
+    )
+    if cdrl_rows:
+        return cdrl_rows
+    clin_rows = extract_clin_schedule(
+        text,
+        award,
+        source_document_id=source_document_id,
+    )
+    if clin_rows:
+        return clin_rows
+    found: list[ScheduleItemOut] = []
+    seen: set[tuple[str, str]] = set()
+    lines = [" ".join(raw.split()) for raw in text.splitlines()]
+    lines = [line for line in lines if line]
+    for index, line in enumerate(lines):
+        dates = _dates_in_line(line, award)
+        nearby_context = " ".join(lines[max(0, index - 4) : index + 1])
+        has_relative_timing = bool(
+            _RELATIVE_MONTH_RANGE.search(line) or _RELATIVE_MONTH.search(line)
+        )
+        if not (
+            _KEYWORD.search(line)
+            or has_relative_timing
+            or (dates and _SCHEDULE_CONTEXT.search(nearby_context))
+        ):
+            continue
+        if not dates:
+            # PDF extraction and Word tables often put the title and date on
+            # adjacent lines/cells. Keep the context narrow to avoid joining
+            # unrelated schedule clauses.
+            for following in lines[index + 1 : index + 3]:
+                line = f"{line} {following}"
+                dates = _dates_in_line(line, award)
+                if dates:
+                    break
+                if _KEYWORD.search(following):
+                    break
+        if not dates:
+            continue
+        due = dates[-1]
+        title = line
+        if len(title) > 160:
+            title = title[:157] + "..."
+        kind = "report" if re.search(r"report", line, re.IGNORECASE) else "deliverable"
+        if re.search(r"milestone", line, re.IGNORECASE):
+            kind = "milestone"
+        key = (title.lower(), due.isoformat())
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(
+            _draft(
+                award,
+                kind_code=kind,
+                title=title,
+                start=dates[0] if len(dates) > 1 else due,
+                due=due,
+                origin_code="extract",
+                notes="Extracted from contract text; confirm before saving.",
+                source_document_id=source_document_id,
+            )
+        )
+    return found
+
+
+def _read_document_text(row: Document) -> tuple[str | None, str | None]:
+    """Return (text, skip_reason)."""
+    path = stored_path(row)
+    if path is None or not path.is_file():
+        return None, "document has no file on disk"
+    ext = (row.stored_ext or path.suffix or "").lower()
+    if not ext.startswith("."):
+        ext = f".{ext}" if ext else ""
+    if ext == ".doc":
+        return None, "Legacy .doc files cannot be parsed; convert to .docx or paste SOW text"
+    if ext not in EXTRACTABLE_EXT:
+        return None, "This file type cannot be parsed; paste SOW text or confirm the template"
+    try:
+        if ext in {".txt", ".csv"}:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        elif ext == ".docx":
+            document = WordDocument(path)
+            parts = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
+            for table in document.tables:
+                for row_cells in table.rows:
+                    line = " | ".join(
+                        cell.text.strip() for cell in row_cells.cells if cell.text.strip()
+                    )
+                    if line:
+                        parts.append(line)
+            text = "\n".join(parts)
+        else:
+            reader = PdfReader(path)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except (OSError, PackageNotFoundError, PdfReadError, FileNotDecryptedError):
+        return None, "could not read document file"
+    if not text.strip():
+        if ext == ".pdf":
+            return None, "PDF has no extractable text; it may be scanned. Paste SOW text instead"
+        return None, "document contains no extractable text"
+    return text, None
+
+
+def propose_schedule(
+    session: Session,
+    award: Award,
+    payload: ScheduleProposeIn,
+) -> ScheduleProposeOut:
+    """Build a draft. Does not insert rows."""
+    notes: list[str] = []
+    items = template_drafts(award)
+    source_id = payload.document_id
+    if source_id is not None:
+        doc = session.get(Document, source_id)
+        if doc is None or doc.award_id != award.award_id:
+            raise ScheduleTrackError("document not found on this award")
+        text, skip = _read_document_text(doc)
+        if skip:
+            notes.append(skip)
+        elif text:
+            cdrl_rows = extract_cdrl_schedule(text, award, source_document_id=source_id)
+            if cdrl_rows:
+                pop_row = _contract_pop_draft(text, award, source_document_id=source_id)
+                items = ([pop_row] if pop_row else []) + cdrl_rows
+                notes.append(
+                    "Structured CDRL schedule found; phase-template rows were replaced "
+                    "with contract dates."
+                )
+                contract_pop = contract_pop_dates(text)
+                award_pop = (_parse_date(award.pop_start), _parse_date(award.pop_end))
+                if contract_pop is not None and contract_pop != award_pop:
+                    notes.append(
+                        "Contract PoP "
+                        f"{contract_pop[0].isoformat()} to {contract_pop[1].isoformat()} "
+                        "differs from the award record; review the award header."
+                    )
+                extracted = []
+            else:
+                clin_rows = extract_clin_schedule(text, award, source_document_id=source_id)
+                if clin_rows:
+                    pop_row = _contract_pop_draft(text, award, source_document_id=source_id)
+                    items = ([pop_row] if pop_row else []) + clin_rows
+                    notes.append(
+                        "Structured CLIN schedule found; phase-template rows were replaced "
+                        "with contract dates."
+                    )
+                    contract_pop = contract_pop_dates(text)
+                    award_pop = (_parse_date(award.pop_start), _parse_date(award.pop_end))
+                    if contract_pop is not None and contract_pop != award_pop:
+                        notes.append(
+                            "Contract PoP "
+                            f"{contract_pop[0].isoformat()} to {contract_pop[1].isoformat()} "
+                            "differs from the award record; review the award header."
+                        )
+                    extracted = []
+                else:
+                    extracted = extract_dated_lines(text, award, source_document_id=source_id)
+            if extracted:
+                items.extend(extracted)
+            elif not cdrl_rows and not clin_rows:
+                notes.append("no dated deliverable lines found in the file")
+    pasted = (payload.text or "").strip()
+    if pasted:
+        cdrl_rows = extract_cdrl_schedule(pasted, award, source_document_id=source_id)
+        if cdrl_rows:
+            pop_row = _contract_pop_draft(pasted, award, source_document_id=source_id)
+            items = ([pop_row] if pop_row else []) + cdrl_rows
+            notes.append(
+                "Structured CDRL schedule found in pasted text; phase-template rows "
+                "were replaced with contract dates."
+            )
+        else:
+            clin_rows = extract_clin_schedule(pasted, award, source_document_id=source_id)
+            if clin_rows:
+                pop_row = _contract_pop_draft(pasted, award, source_document_id=source_id)
+                items = ([pop_row] if pop_row else []) + clin_rows
+                notes.append(
+                    "Structured CLIN schedule found in pasted text; phase-template rows "
+                    "were replaced with contract dates."
+                )
+            else:
+                extracted = extract_dated_lines(pasted, award, source_document_id=source_id)
+                if extracted:
+                    items.extend(extracted)
+                else:
+                    notes.append("no dated deliverable lines found in the pasted text")
+    notes.append("Nothing is saved until you confirm the rows you want to keep.")
+    return ScheduleProposeOut(award_id=award.award_id, notes=notes, items=items)
+
+
+def _insert_item(
+    session: Session,
+    award: Award,
+    draft: ScheduleDraftIn,
+    *,
+    actor_id: int | None,
+) -> ScheduleItem:
+    kind = require_kind(session, draft.kind_code)
+    origin = (
+        draft.origin_code if draft.origin_code in {"template", "extract", "manual"} else "manual"
+    )
+    start = _iso_date(draft.start_date, field="start_date") if draft.start_date else None
+    due = _iso_date(draft.due_date, field="due_date")
+    if start and due < start:
+        raise ScheduleTrackError("due_date must be on or after start_date")
+    source_id = draft.source_document_id
+    if source_id is not None:
+        doc = session.get(Document, source_id)
+        if doc is None or doc.award_id != award.award_id:
+            raise ScheduleTrackError("document not found on this award")
+    row = ScheduleItem(
+        award_id=award.award_id,
+        kind_code=kind,
+        title=draft.title.strip(),
+        start_date=start,
+        due_date=due,
+        status_code="open",
+        notes=draft.notes,
+        source_document_id=source_id,
+        origin_code=origin,
+        created_by=actor_id,
+    )
+    if not row.title:
+        raise ScheduleTrackError("title is required")
+    session.add(row)
+    session.flush()
+    record_event(
+        session,
+        action="schedule_create",
+        entity_type="schedule_item",
+        entity_id=row.schedule_item_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id, "title": row.title},
+    )
+    return row
+
+
+def confirm_schedule(
+    session: Session,
+    award: Award,
+    payload: ScheduleConfirmIn,
+    *,
+    actor_id: int | None,
+) -> list[ScheduleItem]:
+    """Insert kept draft rows."""
+    created: list[ScheduleItem] = []
+    for draft in payload.items:
+        if not draft.keep:
+            continue
+        created.append(_insert_item(session, award, draft, actor_id=actor_id))
+    if created:
+        record_event(
+            session,
+            action="schedule_confirm",
+            entity_type="award",
+            entity_id=award.award_id,
+            actor_user_id=actor_id,
+            detail={"count": len(created)},
+        )
+    return created
+
+
+def create_schedule_item(
+    session: Session,
+    award: Award,
+    draft: ScheduleDraftIn,
+    *,
+    actor_id: int | None,
+) -> ScheduleItem:
+    """Manual add."""
+    draft.origin_code = "manual"
+    return _insert_item(session, award, draft, actor_id=actor_id)
+
+
+def patch_schedule_item(
+    session: Session,
+    row: ScheduleItem,
+    payload: SchedulePatch,
+    *,
+    actor_id: int | None,
+) -> ScheduleItem:
+    """Edit title/dates/status."""
+    if payload.title is not None:
+        title = payload.title.strip()
+        if not title:
+            raise ScheduleTrackError("title is required")
+        row.title = title
+    if payload.kind_code is not None:
+        row.kind_code = require_kind(session, payload.kind_code)
+    if payload.start_date is not None:
+        row.start_date = (
+            _iso_date(payload.start_date, field="start_date") if payload.start_date else None
+        )
+    if payload.due_date is not None:
+        row.due_date = _iso_date(payload.due_date, field="due_date")
+    start = row.start_date
+    if start and row.due_date < start:
+        raise ScheduleTrackError("due_date must be on or after start_date")
+    if payload.notes is not None:
+        row.notes = payload.notes
+    if payload.status_code is not None:
+        status_code = require_status(session, payload.status_code)
+        row.status_code = status_code
+        if status_code in {"done", "waived"} and not row.completed_at:
+            row.completed_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+        if status_code == "open":
+            row.completed_at = None
+        record_event(
+            session,
+            action="schedule_status",
+            entity_type="schedule_item",
+            entity_id=row.schedule_item_id,
+            actor_user_id=actor_id,
+            detail={"status_code": status_code},
+        )
+    else:
+        record_event(
+            session,
+            action="schedule_update",
+            entity_type="schedule_item",
+            entity_id=row.schedule_item_id,
+            actor_user_id=actor_id,
+        )
+    session.flush()
+    return row
+
+
+def delete_schedule_item(session: Session, row: ScheduleItem, *, actor_id: int | None) -> None:
+    """Remove a schedule row (not remaining money)."""
+    item_id = row.schedule_item_id
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="schedule_delete",
+        entity_type="schedule_item",
+        entity_id=item_id,
+        actor_user_id=actor_id,
+    )
+
+
+def _lane(row: ScheduleItem, as_of: date) -> str:
+    if row.status_code in {"done", "waived"}:
+        return "completed"
+    due = date.fromisoformat(row.due_date)
+    if due < as_of:
+        return "behind"
+    return "remaining"
+
+
+def _pct(part: int, whole: int) -> int:
+    if whole <= 0:
+        return 0
+    return max(0, min(100, (part * 100) // whole))
+
+
+def build_gantt(
+    session: Session,
+    *,
+    award_id: int | None,
+    as_of: date | None = None,
+) -> GanttOut:
+    """Compute bars from confirmed schedule rows."""
+    as_of = as_of or _today()
+    query = select(ScheduleItem).order_by(ScheduleItem.due_date, ScheduleItem.schedule_item_id)
+    if award_id is not None:
+        require_award(session, award_id)
+        query = query.where(ScheduleItem.award_id == award_id)
+    rows = list(session.scalars(query))
+    if not rows:
+        return GanttOut(as_of=as_of.isoformat(), chart_start=None, chart_end=None, bars=[])
+    awards: dict[int, Award] = {}
+    starts: list[date] = []
+    ends: list[date] = []
+    for row in rows:
+        award = awards.get(row.award_id)
+        if award is None:
+            loaded = session.get(Award, row.award_id)
+            if loaded is None:
+                continue
+            award = loaded
+            awards[row.award_id] = award
+        bar_start = (
+            date.fromisoformat(row.start_date)
+            if row.start_date
+            else date.fromisoformat(row.due_date)
+        )
+        bar_end = date.fromisoformat(row.due_date)
+        bar_end = max(bar_end, bar_start)
+        starts.append(bar_start)
+        ends.append(bar_end)
+        starts.append(date.fromisoformat(award.pop_start))
+        ends.append(date.fromisoformat(award.pop_end))
+    chart_start = min(starts)
+    chart_end = max(ends)
+    whole = (chart_end - chart_start).days
+    bars: list[GanttBarOut] = []
+    for row in rows:
+        award = awards.get(row.award_id)
+        if award is None:
+            continue
+        bar_start = (
+            date.fromisoformat(row.start_date)
+            if row.start_date
+            else date.fromisoformat(row.due_date)
+        )
+        bar_end = date.fromisoformat(row.due_date)
+        bar_end = max(bar_end, bar_start)
+        offset = (bar_start - chart_start).days
+        width = max(1, (bar_end - bar_start).days)
+        bars.append(
+            GanttBarOut(
+                schedule_item_id=row.schedule_item_id,
+                award_id=row.award_id,
+                award_short_code=award.short_code,
+                title=row.title,
+                kind_code=row.kind_code,
+                start_date=bar_start.isoformat(),
+                due_date=bar_end.isoformat(),
+                status_code=row.status_code,
+                lane=_lane(row, as_of),
+                offset_pct=_pct(offset, whole),
+                width_pct=max(1, _pct(width, whole)),
+            )
+        )
+    return GanttOut(
+        as_of=as_of.isoformat(),
+        chart_start=chart_start.isoformat(),
+        chart_end=chart_end.isoformat(),
+        bars=bars,
+    )

@@ -63,6 +63,7 @@ def _ffp_payload() -> dict[str, object]:
         "pop_end": "2027-01-31",
         "awarded_cost_cents": 20_000_000,
         "funded_amount_cents": 20_000_000,
+        "fee_pct": 1000,
         "fee_pot_cents": 0,
         "rate_policy": {
             "template_code": "FFP_INTERNAL",
@@ -97,8 +98,14 @@ def test_admin_creates_cpff_and_ffp_with_different_policies(client: TestClient) 
         "travel",
         "fee",
     }
-    assert {line["category_code"] for line in ffp_body["budget_lines"]} >= {"personnel", "travel"}
-    assert "fee" not in {line["category_code"] for line in ffp_body["budget_lines"]}
+    assert {line["category_code"] for line in ffp_body["budget_lines"]} >= {
+        "personnel",
+        "travel",
+        "fee",
+    }
+    assert ffp_body["fee_pct"] == 1000
+    assert ffp_body["fee_pot_cents"] == 2_000_000
+    assert ffp_body["current_policy"]["fee_pct"] == 0
 
 
 def test_remaining_zero_actuals_and_travel_mod(client: TestClient) -> None:

@@ -14,6 +14,7 @@ class PurchaseIn(BaseModel):
     description: str | None = None
     vendor: str | None = None
     effective_date: str
+    expected_date: str | None = None
 
 
 class TravelIn(BaseModel):
@@ -26,6 +27,7 @@ class TravelIn(BaseModel):
     effective_date: str
     trip_end: str | None = None
     category_code: str = "travel"
+    expected_date: str | None = None
 
 
 class InstrumentShareIn(BaseModel):
@@ -60,8 +62,16 @@ class CommitmentOut(BaseModel):
     person_id: int | None
     effective_date: str
     trip_end: str | None
+    expected_date: str | None = None
     instrument_id: int | None
     charge_id: int | None
+
+
+class CommitmentPatch(BaseModel):
+    """Expected invoice date and notes. Not remaining."""
+
+    expected_date: str | None = None
+    description: str | None = None
 
 
 class InstrumentShareOut(BaseModel):

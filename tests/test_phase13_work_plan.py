@@ -1,0 +1,335 @@
+"""Phase 13: editable schedules and SOW work-progress Gantt."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+from tests.conftest import auth_header, login
+from tests.test_phase2_time import _award, _employee
+
+from ledger.config import PROJECT_ROOT
+from ledger.services import work_plan
+
+SOW = """\
+Section F - Deliveries or Performance
+0001 Period of Performance
+From
+31 Aug 2026
+To
+30 Aug 2028
+4.0 REQUIREMENTS (TASKS):
+4.1 Kickoff Meeting
+4.1.1 The PI shall coordinate with the technical monitor.
+4.2 Procure Materials
+4.2.1 The contractor shall procure necessary materials.
+4.3 Validate Automation
+4.3.1 The contractor shall demonstrate the workflow.
+5.0 COORDINATION AND TECHNOLOGY TRANSFER SUPPORT
+"""
+
+
+def test_alembic_head_includes_work_plan() -> None:
+    versions = {path.name for path in (PROJECT_ROOT / "alembic" / "versions").glob("*.py")}
+    assert "0010_phase13_work_plan.py" in versions
+
+
+def test_extract_numbered_sow_tasks_with_work_month_ranges() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-09-30",
+        pop_end="2027-09-30",
+    )
+    text = """\
+Schedule of planned tasks
+4.2.1: Kickoff Meeting: Month 1
+4.2.2: Procure Materials: Months 1-3
+W911NF26CA035
+Page 24 of 100
+4.2.14: Assess Shelf-Life of Created NPs: Months 4–24
+"""
+
+    rows = work_plan.extract_requirements(text, award, source_document_id=12)
+
+    assert [row.requirement_code for row in rows] == ["4.2.1", "4.2.2", "4.2.14"]
+    assert [row.title for row in rows] == [
+        "Kickoff Meeting",
+        "Procure Materials",
+        "Assess Shelf-Life of Created NPs",
+    ]
+    assert [row.start_date for row in rows] == [
+        "2026-09-30",
+        "2026-09-30",
+        "2026-12-30",
+    ]
+    assert [row.due_date for row in rows] == [
+        "2026-10-29",
+        "2026-12-29",
+        "2028-09-29",
+    ]
+    assert all(row.source_document_id == 12 for row in rows)
+
+
+def test_extract_timed_tasks_from_text_table_rows() -> None:
+    award = SimpleNamespace(
+        award_id=7,
+        pop_start="2026-09-30",
+        pop_end="2027-09-30",
+    )
+    text = """\
+Task | Task name | Timing
+4.2.1 | Kickoff Meeting | Month 1
+4.2.2\tProcure Materials\tMonths 1-3
+"""
+
+    rows = work_plan.extract_requirements(text, award, source_document_id=None)
+
+    assert [row.requirement_code for row in rows] == ["4.2.1", "4.2.2"]
+    assert [row.title for row in rows] == ["Kickoff Meeting", "Procure Materials"]
+    assert rows[1].start_date == "2026-09-30"
+    assert rows[1].due_date == "2026-12-29"
+
+
+def test_work_plan_propose_confirm_progress_and_gantt(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client,
+        admin,
+        short_code="P13A",
+        type_code="FFP",
+        template="FFP_INTERNAL",
+        oh_pct=0,
+    )
+    award_id = award["award_id"]
+
+    proposed = client.post(
+        f"/awards/{award_id}/work-plan/propose",
+        json={"text": SOW},
+        headers=auth_header(admin),
+    )
+    assert proposed.status_code == 200, proposed.text
+    draft = proposed.json()["items"]
+    assert [row["requirement_code"] for row in draft] == ["4.1", "4.2", "4.3"]
+    assert draft[0]["start_date"] == "2026-08-31"
+    assert draft[-1]["due_date"] == "2028-08-30"
+    assert (
+        client.get(
+            f"/awards/{award_id}/work-plan",
+            headers=auth_header(admin),
+        ).json()
+        == []
+    )
+
+    confirmed = client.post(
+        f"/awards/{award_id}/work-plan/confirm",
+        json={"items": draft},
+        headers=auth_header(admin),
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    rows = confirmed.json()
+    assert len(rows) == 3
+
+    item_id = rows[1]["work_plan_item_id"]
+    patched = client.patch(
+        f"/work-plan/{item_id}",
+        json={
+            "title": "Procure and inventory materials",
+            "percent_complete_bp": 5000,
+        },
+        headers=auth_header(admin),
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["percent_complete_bp"] == 5000
+
+    chart = client.get(
+        f"/awards/{award_id}/work-gantt",
+        params={"as_of": "2028-09-01"},
+        headers=auth_header(admin),
+    )
+    assert chart.status_code == 200, chart.text
+    bar = next(row for row in chart.json()["bars"] if row["work_plan_item_id"] == item_id)
+    assert bar["complete_width_pct"] == 50
+    assert bar["lane"] == "behind"
+
+    completed = client.patch(
+        f"/work-plan/{item_id}",
+        json={"percent_complete_bp": 10000},
+        headers=auth_header(admin),
+    )
+    assert completed.status_code == 200
+    chart = client.get(
+        f"/awards/{award_id}/work-gantt",
+        params={"as_of": "2028-09-01"},
+        headers=auth_header(admin),
+    )
+    bar = next(row for row in chart.json()["bars"] if row["work_plan_item_id"] == item_id)
+    assert bar["lane"] == "completed"
+    assert bar["complete_width_pct"] == 100
+
+    employee, _person_id = _employee(client, admin, username="p13employee")
+    viewed = client.get("/work-gantt", headers=auth_header(employee))
+    assert viewed.status_code == 200, viewed.text
+    assert any(row["work_plan_item_id"] == item_id for row in viewed.json()["bars"])
+    assert (
+        client.post(
+            f"/awards/{award_id}/work-plan/propose",
+            json={},
+            headers=auth_header(employee),
+        ).status_code
+        == 403
+    )
+
+
+def test_confirmed_schedule_row_can_be_edited(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client,
+        admin,
+        short_code="P13EDIT",
+        type_code="FFP",
+        template="FFP_INTERNAL",
+        oh_pct=0,
+    )
+    award_id = award["award_id"]
+    created = client.post(
+        f"/awards/{award_id}/schedule",
+        json={
+            "kind_code": "deliverable",
+            "title": "Initial title",
+            "start_date": "2026-03-01",
+            "due_date": "2026-04-01",
+        },
+        headers=auth_header(admin),
+    )
+    assert created.status_code == 201, created.text
+
+    patched = client.patch(
+        f"/schedule/{created.json()['schedule_item_id']}",
+        json={
+            "title": "Edited title",
+            "start_date": "2026-03-15",
+            "due_date": "2026-04-15",
+        },
+        headers=auth_header(admin),
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["title"] == "Edited title"
+    assert patched.json()["start_date"] == "2026-03-15"
+    assert patched.json()["due_date"] == "2026-04-15"
+
+
+def test_unused_award_delete_cleans_document_linked_work_plan(client: TestClient) -> None:
+    admin = login(client)
+    headers = auth_header(admin)
+    award = _award(
+        client,
+        admin,
+        short_code="P13DELETE",
+        type_code="FFP",
+        template="FFP_INTERNAL",
+        oh_pct=0,
+    )
+    award_id = award["award_id"]
+    created = client.post(
+        f"/awards/{award_id}/documents",
+        json={"kind_code": "contract", "title": "SOW"},
+        headers=headers,
+    )
+    document_id = created.json()["document_id"]
+    uploaded = client.post(
+        f"/documents/{document_id}/file",
+        files={"file": ("sow.txt", SOW.encode(), "text/plain")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    proposed = client.post(
+        f"/awards/{award_id}/work-plan/propose",
+        json={"document_id": document_id},
+        headers=headers,
+    )
+    confirmed = client.post(
+        f"/awards/{award_id}/work-plan/confirm",
+        json={"items": proposed.json()["items"]},
+        headers=headers,
+    )
+    assert confirmed.status_code == 201, confirmed.text
+
+    deleted = client.delete(f"/awards/{award_id}", headers=headers)
+    assert deleted.status_code == 204, deleted.text
+    assert client.get(f"/awards/{award_id}", headers=headers).status_code == 404
+
+
+def test_manual_work_plan_row_appends_and_moves(client: TestClient) -> None:
+    admin = login(client)
+    headers = auth_header(admin)
+    award = _award(
+        client,
+        admin,
+        short_code="P13ORDER",
+        type_code="FFP",
+        template="FFP_INTERNAL",
+        oh_pct=0,
+    )
+    award_id = award["award_id"]
+    proposed = client.post(
+        f"/awards/{award_id}/work-plan/propose",
+        json={"text": SOW},
+        headers=headers,
+    )
+    assert proposed.status_code == 200, proposed.text
+    confirmed = client.post(
+        f"/awards/{award_id}/work-plan/confirm",
+        json={"items": proposed.json()["items"]},
+        headers=headers,
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    first_id = confirmed.json()[0]["work_plan_item_id"]
+    last_extracted_id = confirmed.json()[-1]["work_plan_item_id"]
+    first_start = confirmed.json()[0]["start_date"]
+    first_due = confirmed.json()[0]["due_date"]
+
+    added = client.post(
+        f"/awards/{award_id}/work-plan",
+        json={
+            "requirement_code": "4.11",
+            "title": "Monthly reporting",
+            "start_date": "2026-09-01",
+            "due_date": "2028-08-30",
+            "origin_code": "manual",
+        },
+        headers=headers,
+    )
+    assert added.status_code == 201, added.text
+    manual_id = added.json()["work_plan_item_id"]
+
+    listed = client.get(f"/awards/{award_id}/work-plan", headers=headers).json()
+    assert [row["requirement_code"] for row in listed] == ["4.1", "4.2", "4.3", "4.11"]
+    assert listed[-1]["work_plan_item_id"] == manual_id
+
+    chart = client.get(f"/awards/{award_id}/work-gantt", headers=headers).json()
+    assert [row["requirement_code"] for row in chart["bars"]] == ["4.1", "4.2", "4.3", "4.11"]
+
+    down_on_last = client.post(
+        f"/work-plan/{manual_id}/move",
+        json={"direction": "down"},
+        headers=headers,
+    )
+    assert down_on_last.status_code == 200, down_on_last.text
+    still_last = client.get(f"/awards/{award_id}/work-plan", headers=headers).json()
+    assert still_last[-1]["work_plan_item_id"] == manual_id
+
+    moved = client.post(
+        f"/work-plan/{first_id}/move",
+        json={"direction": "down"},
+        headers=headers,
+    )
+    assert moved.status_code == 200, moved.text
+    reordered = client.get(f"/awards/{award_id}/work-plan", headers=headers).json()
+    assert [row["requirement_code"] for row in reordered] == ["4.2", "4.1", "4.3", "4.11"]
+    first_row = next(row for row in reordered if row["work_plan_item_id"] == first_id)
+    assert first_row["start_date"] == first_start
+    assert first_row["due_date"] == first_due
+
+    chart = client.get(f"/awards/{award_id}/work-gantt", headers=headers).json()
+    assert [row["requirement_code"] for row in chart["bars"]] == ["4.2", "4.1", "4.3", "4.11"]
+    assert last_extracted_id == reordered[2]["work_plan_item_id"]

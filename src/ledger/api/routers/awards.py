@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db, require_admin
-from ledger.models import Award, UserAccount
+from ledger.models import Award, AwardRatePolicy, Clin, FfpBillingPeriod, UserAccount
 from ledger.schemas.awards import (
     AwardCardOut,
     AwardCreate,
@@ -15,22 +15,44 @@ from ledger.schemas.awards import (
     AwardOut,
     AwardRemainingOut,
     AwardUpdate,
+    ClinExerciseIn,
+    ClinIn,
+    ClinOut,
+    ClinUpdate,
+    FfpBillingPeriodOut,
+    FfpBillingSubmitIn,
     RatePolicyIn,
     RatePolicyOut,
 )
 from ledger.services.awards import (
     AwardError,
+    add_clin,
     apply_mod,
     create_award,
+    delete_award,
+    delete_clin,
+    delete_rate_policy,
+    exercise_clin,
     remaining_for,
     revise_rate_policy,
     serialize_award,
     serialize_award_card,
+    serialize_billing_period,
+    serialize_clin,
     serialize_policy,
+    submit_billing_period,
     update_award,
+    update_clin,
 )
 
 router = APIRouter(prefix="/awards", tags=["awards"])
+
+
+def _http(exc: AwardError) -> HTTPException:
+    message = str(exc)
+    if "posted activity" in message or "cannot delete" in message:
+        return HTTPException(status.HTTP_409_CONFLICT, message)
+    return HTTPException(status.HTTP_400_BAD_REQUEST, message)
 
 
 def _get_award(session: Session, award_id: int) -> Award:
@@ -38,6 +60,20 @@ def _get_award(session: Session, award_id: int) -> Award:
     if award is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "award not found")
     return award
+
+
+def _get_clin(session: Session, award: Award, clin_id: int) -> Clin:
+    row = session.get(Clin, clin_id)
+    if row is None or row.award_id != award.award_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "clin not found")
+    return row
+
+
+def _get_billing_period(session: Session, award: Award, billing_period_id: int) -> FfpBillingPeriod:
+    row = session.get(FfpBillingPeriod, billing_period_id)
+    if row is None or row.award_id != award.award_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "FFP billing period not found")
+    return row
 
 
 @router.get("")
@@ -86,12 +122,101 @@ def patch_award(
     award_id: int,
     payload: AwardUpdate,
     session: Session = Depends(get_db),
-    _admin: UserAccount = Depends(require_admin),
+    admin: UserAccount = Depends(require_admin),
 ) -> AwardOut:
     """Patch header fields (admin)."""
-    award = update_award(session, _get_award(session, award_id), payload)
+    try:
+        award = update_award(
+            session, _get_award(session, award_id), payload, actor_id=admin.user_account_id
+        )
+    except AwardError as exc:
+        raise _http(exc) from exc
     session.flush()
     return serialize_award(session, award)
+
+
+@router.delete("/{award_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_award(
+    award_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused award (D39). Used awards must be closed."""
+    award = _get_award(session, award_id)
+    try:
+        delete_award(session, award, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/{award_id}/clins", response_model=ClinOut, status_code=status.HTTP_201_CREATED)
+def post_clin(
+    award_id: int,
+    payload: ClinIn,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> ClinOut:
+    """Add a CLIN or option line."""
+    award = _get_award(session, award_id)
+    try:
+        row = add_clin(session, award, payload, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
+    return serialize_clin(row)
+
+
+@router.patch("/{award_id}/clins/{clin_id}", response_model=ClinOut)
+def patch_clin(
+    award_id: int,
+    clin_id: int,
+    payload: ClinUpdate,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> ClinOut:
+    """Patch a CLIN (not exercise)."""
+    award = _get_award(session, award_id)
+    clin = _get_clin(session, award, clin_id)
+    try:
+        row = update_clin(session, award, clin, payload, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
+    return serialize_clin(row)
+
+
+@router.post("/{award_id}/clins/{clin_id}/exercise", response_model=ClinOut)
+def post_clin_exercise(
+    award_id: int,
+    clin_id: int,
+    payload: ClinExerciseIn | None = None,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> ClinOut:
+    """Mark an option CLIN exercised."""
+    award = _get_award(session, award_id)
+    clin = _get_clin(session, award, clin_id)
+    try:
+        row = exercise_clin(
+            session, award, clin, payload or ClinExerciseIn(), actor_id=admin.user_account_id
+        )
+    except AwardError as exc:
+        raise _http(exc) from exc
+    return serialize_clin(row)
+
+
+@router.delete("/{award_id}/clins/{clin_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_clin(
+    award_id: int,
+    clin_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unexercised CLIN."""
+    award = _get_award(session, award_id)
+    clin = _get_clin(session, award, clin_id)
+    try:
+        delete_clin(session, award, clin, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
 
 
 @router.post("/{award_id}/mods", response_model=AwardOut, status_code=status.HTTP_201_CREATED)
@@ -109,6 +234,27 @@ def post_mod(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     session.flush()
     return serialize_award(session, award)
+
+
+@router.post(
+    "/{award_id}/billing-periods/{billing_period_id}/submit",
+    response_model=FfpBillingPeriodOut,
+)
+def post_billing_period_submit(
+    award_id: int,
+    billing_period_id: int,
+    payload: FfpBillingSubmitIn,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> FfpBillingPeriodOut:
+    """Record submission of one scheduled FFP monthly invoice."""
+    award = _get_award(session, award_id)
+    row = _get_billing_period(session, award, billing_period_id)
+    try:
+        submit_billing_period(session, award, row, payload, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
+    return serialize_billing_period(row)
 
 
 @router.post(
@@ -130,6 +276,27 @@ def post_rate_policy(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     session.flush()
     return serialize_policy(session, policy)
+
+
+@router.delete(
+    "/{award_id}/rate-policies/{policy_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_rate_policy(
+    award_id: int,
+    policy_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused rate-policy revision (D45)."""
+    _get_award(session, award_id)
+    policy = session.get(AwardRatePolicy, policy_id)
+    if policy is None or policy.award_id != award_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rate policy not found")
+    try:
+        delete_rate_policy(session, policy, actor_id=admin.user_account_id)
+    except AwardError as exc:
+        raise _http(exc) from exc
 
 
 @router.get("/{award_id}/remaining", response_model=AwardRemainingOut)

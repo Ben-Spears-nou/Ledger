@@ -114,6 +114,18 @@ export default function Instruments() {
     }
   }
 
+  async function deleteInstrument(instrumentId) {
+    setError("");
+    setNotice("");
+    try {
+      await api(`/instruments/${instrumentId}`, { method: "DELETE" });
+      setNotice("Instrument removed.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   const awardLabel = Object.fromEntries(
     awards.map((award) => [award.award_id, `${award.short_code} — ${award.title}`])
   );
@@ -270,13 +282,20 @@ export default function Instruments() {
               })}
             </tbody>
           </table>
-          {row.status_code === "open" ? (
-            <p>
+          <p>
+            {row.status_code === "open" ? (
               <button type="button" onClick={() => postInstrument(row.instrument_id)}>
                 Post
               </button>
-            </p>
-          ) : null}
+            ) : null}{" "}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => deleteInstrument(row.instrument_id)}
+            >
+              Delete
+            </button>
+          </p>
         </div>
       ))}
     </>

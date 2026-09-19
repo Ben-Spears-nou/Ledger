@@ -64,6 +64,7 @@ class AwardCreate(BaseModel):
     funded_through: str | None = None
     awarded_cost_cents: int = Field(default=0, ge=0)
     funded_amount_cents: int = Field(default=0, ge=0)
+    fee_pct: int = Field(default=0, ge=0)
     fee_pot_cents: int = Field(default=0, ge=0)
     rate_policy: RatePolicyIn
     budget_lines: list[BudgetLineIn] | None = None
@@ -73,10 +74,33 @@ class AwardCreate(BaseModel):
 class AwardUpdate(BaseModel):
     """Partial award header edit (not a formal mod)."""
 
+    short_code: str | None = None
     title: str | None = None
     agency: str | None = None
+    instrument_code: str | None = None
+    mechanism_code: str | None = None
+    phase_code: str | None = None
+    type_code: str | None = None
     status_code: str | None = None
     funded_through: str | None = None
+    overrun_policy: str | None = None
+
+
+class ClinUpdate(BaseModel):
+    """Patch a CLIN. Exercised_at is set via the exercise route."""
+
+    clin_number: str | None = None
+    description: str | None = None
+    amount_cents: int | None = Field(default=None, ge=0)
+    is_option: bool | None = None
+    exercise_window_start: str | None = None
+    exercise_window_end: str | None = None
+
+
+class ClinExerciseIn(BaseModel):
+    """Mark an option CLIN exercised (D17, D39)."""
+
+    exercised_at: str | None = None
 
 
 class BudgetLineChange(BaseModel):
@@ -95,6 +119,7 @@ class AwardModCreate(BaseModel):
     description: str | None = None
     awarded_cost_cents: int | None = Field(default=None, ge=0)
     funded_amount_cents: int | None = Field(default=None, ge=0)
+    fee_pct: int | None = Field(default=None, ge=0)
     fee_pot_cents: int | None = Field(default=None, ge=0)
     pop_start: str | None = None
     pop_end: str | None = None
@@ -155,6 +180,25 @@ class ClinOut(BaseModel):
     exercised_at: str | None
 
 
+class FfpBillingSubmitIn(BaseModel):
+    """Record an FFP invoice submission for one scheduled period."""
+
+    submitted_cents: int | None = Field(default=None, ge=0)
+    submitted_at: str | None = None
+
+
+class FfpBillingPeriodOut(BaseModel):
+    """One persisted FFP working-month invoice period."""
+
+    billing_period_id: int
+    period_number: int
+    period_start: str
+    period_end: str
+    scheduled_cents: int
+    submitted_cents: int | None
+    submitted_at: str | None
+
+
 class AwardRemainingOut(BaseModel):
     """``v_budget_remaining`` row."""
 
@@ -174,6 +218,7 @@ class AwardRemainingOut(BaseModel):
     remaining_approved_cents: int
     remaining_funded_cents: int
     unexercised_option_cents: int
+    pipeline_cents: int = 0
 
 
 class AwardCardOut(BaseModel):
@@ -205,12 +250,17 @@ class AwardOut(BaseModel):
     funded_through: str | None
     awarded_cost_cents: int
     funded_amount_cents: int
+    fee_pct: int
     fee_pot_cents: int
     enforce_ceiling: bool
     labor_incurred: bool
     fee_engine: str
     ceiling_warn_pct: int
+    overrun_policy: str = "warn"
     current_policy: RatePolicyOut | None = None
     budget_lines: list[BudgetLineOut] = Field(default_factory=list)
     clins: list[ClinOut] = Field(default_factory=list)
+    billing_periods: list[FfpBillingPeriodOut] = Field(default_factory=list)
     remaining: AwardRemainingOut | None = None
+    can_delete: bool = False
+    type_locked: bool = False
