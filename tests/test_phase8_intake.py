@@ -16,6 +16,7 @@ def test_lookups_expose_audit_vocab_admin_only(client: TestClient) -> None:
     assert lookups.status_code == 200, lookups.text
     body = lookups.json()
     assert "week_approve" in body["audit_actions"]
+    assert "week_unapprove" in body["audit_actions"]
     assert "award_create" in body["audit_actions"]
     assert "person_create" in body["audit_actions"]
     assert "award" in body["audit_entity_types"]

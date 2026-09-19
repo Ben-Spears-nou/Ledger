@@ -270,7 +270,12 @@ export default function MyWeek() {
             </ul>
           </div>
         ) : null}
-        {returnComment ? <p>Returned: {returnComment}</p> : null}
+        {returnComment ? (
+          <p>
+            {status === "returned" ? "Sent back for recoding: " : "Returned: "}
+            {returnComment}
+          </p>
+        ) : null}
       </div>
 
       <div className="card week-grid-wrap">

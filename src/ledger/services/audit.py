@@ -82,6 +82,7 @@ AUDIT_ACTIONS = (
     "week_approve",
     "week_return",
     "week_submit",
+    "week_unapprove",
     "work_plan_confirm",
     "work_plan_create",
     "work_plan_delete",

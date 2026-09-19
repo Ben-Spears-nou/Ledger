@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,7 @@ from ledger.services.time import (
     replace_week_lines,
     return_period,
     submit_period,
+    unapprove_period,
 )
 
 me_router = APIRouter(prefix="/me", tags=["time"])
@@ -178,15 +179,25 @@ def submit_my_week(
 
 @approvals_router.get("", response_model=list[WeekAdminOut])
 def list_approvals(
+    status_code: str = Query(default="submitted", alias="status"),
     session: Session = Depends(get_db),
     _admin: UserAccount = Depends(require_admin),
 ) -> list[WeekAdminOut]:
-    """Submitted weeks waiting on the sole approver."""
-    periods = session.scalars(
-        select(TimesheetPeriod)
-        .where(TimesheetPeriod.status_code == "submitted")
-        .order_by(TimesheetPeriod.week_start, TimesheetPeriod.person_id)
-    ).all()
+    """Submitted weeks waiting, or already-approved weeks that can be unapproved."""
+    if status_code not in {"submitted", "approved"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "status must be submitted or approved")
+    order = (
+        TimesheetPeriod.approved_at.desc()
+        if status_code == "approved"
+        else TimesheetPeriod.week_start
+    )
+    periods = list(
+        session.scalars(
+            select(TimesheetPeriod)
+            .where(TimesheetPeriod.status_code == status_code)
+            .order_by(order, TimesheetPeriod.person_id)
+        )
+    )
     return [_admin_week(session, period) for period in periods]
 
 
@@ -235,6 +246,26 @@ def bounce_week(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "timesheet not found")
     try:
         return_period(session, period, payload.comment, actor_id=admin.user_account_id)
+    except TimeError as exc:
+        raise _http(exc) from exc
+    return _admin_week(session, period)
+
+
+@approvals_router.post("/{period_id}/unapprove", response_model=WeekAdminOut)
+def unapprove_week(
+    period_id: int,
+    payload: ReturnWeekIn,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WeekAdminOut:
+    """Reverse posted labor and return the week for recoding."""
+    period = session.get(TimesheetPeriod, period_id)
+    if period is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "timesheet not found")
+    try:
+        unapprove_period(
+            session, period, payload.comment, actor_id=admin.user_account_id
+        )
     except TimeError as exc:
         raise _http(exc) from exc
     return _admin_week(session, period)

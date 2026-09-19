@@ -378,7 +378,6 @@ def replace_week_lines(
                 task_id=task_id,
             )
         )
-    period.return_comment = None
     session.flush()
     return period
 
@@ -429,13 +428,22 @@ def return_period(
 
 
 def _existing_labor_charge(session: Session, line_id: int) -> Charge | None:
-    return session.scalar(
+    """Open labor posting for a timesheet line (not yet reversed)."""
+    labor = session.scalar(
         select(Charge).where(
             Charge.timesheet_line_id == line_id,
             Charge.source == "labor",
             Charge.reverses_charge_id.is_(None),
         )
     )
+    if labor is None:
+        return None
+    reversed_already = session.scalar(
+        select(Charge.charge_id).where(Charge.reverses_charge_id == labor.charge_id)
+    )
+    if reversed_already is not None:
+        return None
+    return labor
 
 
 def approve_warnings(session: Session, period: TimesheetPeriod) -> list[str]:
@@ -585,6 +593,13 @@ def approve_period(
 
 def reverse_charge(session: Session, charge: Charge, *, actor_id: int | None) -> Charge:
     """Insert an opposite charge. Does not edit the original (D5)."""
+    if charge.source == "reversal" or charge.reverses_charge_id is not None:
+        raise TimeError("cannot reverse a reversal")
+    existing = session.scalar(
+        select(Charge.charge_id).where(Charge.reverses_charge_id == charge.charge_id)
+    )
+    if existing is not None:
+        raise TimeError("charge already reversed")
     reversal = Charge(
         source="reversal",
         timesheet_line_id=charge.timesheet_line_id,
@@ -613,6 +628,51 @@ def reverse_charge(session: Session, charge: Charge, *, actor_id: int | None) ->
     session.add(reversal)
     session.flush()
     return reversal
+
+
+def unapprove_period(
+    session: Session,
+    period: TimesheetPeriod,
+    comment: str,
+    *,
+    actor_id: int | None,
+) -> TimesheetPeriod:
+    """Reverse posted labor and return the week so hours can be recoded."""
+    if period.status_code != "approved":
+        raise TimeError("only approved weeks can be unapproved")
+    note = comment.strip()
+    if not note:
+        raise TimeError("comment is required")
+    lines = session.scalars(
+        select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
+    ).all()
+    reversed_ids: list[int] = []
+    for line in lines:
+        labor = _existing_labor_charge(session, line.timesheet_line_id)
+        if labor is None:
+            continue
+        reversal = reverse_charge(session, labor, actor_id=actor_id)
+        labor.timesheet_line_id = None
+        reversal.timesheet_line_id = None
+        reversed_ids.append(labor.charge_id)
+    period.status_code = "returned"
+    period.return_comment = note
+    period.approved_at = None
+    period.approved_by = None
+    session.flush()
+    record_event(
+        session,
+        action="week_unapprove",
+        entity_type="timesheet_period",
+        entity_id=period.timesheet_period_id,
+        actor_user_id=actor_id,
+        detail={
+            "person_id": period.person_id,
+            "week_start": period.week_start,
+            "reversed_charge_ids": reversed_ids,
+        },
+    )
+    return period
 
 
 def period_hours_total(session: Session, period: TimesheetPeriod) -> float:

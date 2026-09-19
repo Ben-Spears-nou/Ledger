@@ -155,6 +155,75 @@ def test_approve_moves_actuals_and_remaining(client: TestClient) -> None:
     assert remaining.json()["remaining_approved_cents"] == 5_000_000 - 35_750
 
 
+def test_unapprove_reverses_labor_and_returns_week_for_recode(client: TestClient) -> None:
+    admin = login(client)
+    headers = auth_header(admin)
+    wrong = _award(
+        client, admin, short_code="WRONG", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
+    )
+    right = _award(
+        client, admin, short_code="RIGHT", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
+    )
+    alex, _ = _employee(client, admin)
+    week = _put_week(
+        client,
+        alex,
+        "2026-03-02",
+        [{"work_date": "2026-03-02", "hours": 2, "award_id": wrong["award_id"]}],
+    )
+    period_id = week["timesheet_period_id"]
+    client.post("/me/week/submit", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
+    approved = client.post(f"/approvals/{period_id}/approve", headers=headers)
+    assert approved.status_code == 200, approved.text
+    assert client.get("/approvals", headers=headers).json() == []
+    listed = client.get("/approvals", params={"status": "approved"}, headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()[0]["timesheet_period_id"] == period_id
+
+    denied = client.post(
+        f"/approvals/{period_id}/unapprove",
+        json={"comment": "wrong award"},
+        headers=auth_header(alex),
+    )
+    assert denied.status_code == 403
+    missing_comment = client.post(
+        f"/approvals/{period_id}/unapprove",
+        json={"comment": "  "},
+        headers=headers,
+    )
+    assert missing_comment.status_code == 400
+
+    undone = client.post(
+        f"/approvals/{period_id}/unapprove",
+        json={"comment": "Hours were on the wrong contract."},
+        headers=headers,
+    )
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["status_code"] == "returned"
+    wrong_remaining = client.get(f"/awards/{wrong['award_id']}/remaining", headers=headers)
+    assert wrong_remaining.json()["actual_cents"] == 0
+    assert wrong_remaining.json()["remaining_approved_cents"] == 5_000_000
+
+    mine = client.get("/me/week", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
+    assert mine.json()["status_code"] == "returned"
+    assert mine.json()["return_comment"] == "Hours were on the wrong contract."
+    recoded = _put_week(
+        client,
+        alex,
+        "2026-03-02",
+        [{"work_date": "2026-03-02", "hours": 2, "award_id": right["award_id"]}],
+    )
+    assert recoded["status_code"] == "returned"
+    assert recoded["return_comment"] == "Hours were on the wrong contract."
+    client.post("/me/week/submit", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
+    reapproved = client.post(f"/approvals/{period_id}/approve", headers=headers)
+    assert reapproved.status_code == 200, reapproved.text
+    right_remaining = client.get(f"/awards/{right['award_id']}/remaining", headers=headers)
+    assert right_remaining.json()["actual_cents"] == 35_750
+    wrong_remaining = client.get(f"/awards/{wrong['award_id']}/remaining", headers=headers)
+    assert wrong_remaining.json()["actual_cents"] == 0
+
+
 def test_same_hours_different_policies_differ_in_dollars(client: TestClient) -> None:
     admin = login(client)
     award_a = _award(
