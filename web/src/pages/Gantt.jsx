@@ -3,15 +3,18 @@ import { Link } from "react-router-dom";
 import { api, getUser, todayIso } from "../api.js";
 import { MonthGantt } from "./MonthGantt.jsx";
 
-function GanttChart({ chart, title = "Contract schedule" }) {
+function GanttChart({ chart, title = "Contract schedule", colorByAward = false }) {
   return (
     <MonthGantt
       chart={chart}
       title={title}
       empty="No confirmed schedule rows yet."
+      colorByAward={colorByAward}
       rows={(chart?.bars || []).map((bar) => ({
         key: bar.schedule_item_id,
         label: `${bar.award_short_code} ${bar.title}`,
+        colorKey: bar.award_id,
+        colorLabel: bar.award_short_code,
         lane: bar.lane,
         startDate: bar.start_date,
         dueDate: bar.due_date,
@@ -74,7 +77,8 @@ export default function Gantt() {
     <>
       <h1>Gantt</h1>
       <p className="muted">
-        Confirmed contract milestones and deliverables. Completed, remaining, and
+        Confirmed contract milestones and deliverables. All awards are colored
+        per award; pick one award for lane colors. Completed, remaining, and
         behind are as-of the date you pick. Print this page for a snapshot.
       </p>
       {error ? <p className="error">{error}</p> : null}
@@ -109,6 +113,7 @@ export default function Gantt() {
       <div className="card">
         <GanttChart
           chart={chart}
+          colorByAward={!awardId}
           title={
             selectedAward
               ? `${selectedAward.short_code} — Contract schedule`

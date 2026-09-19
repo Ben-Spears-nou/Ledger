@@ -1,4 +1,4 @@
-// One hue per award so the portfolio work Gantt separates projects at a glance.
+// One hue per award so portfolio Gantts separate projects at a glance.
 // Single-award charts keep the lane colors from ganttSvg.
 const HUES = [212, 148, 280, 28, 330, 192, 96, 256, 8, 62];
 
