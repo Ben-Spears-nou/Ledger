@@ -875,6 +875,12 @@ The separate `/work-gantt` chart shows the full planned bar with a
 percent-complete fill and completed / remaining / behind state. It is
 printable for monthly reports and presentations.
 
+One award is ordered by its SOW order so the chart reads like the
+statement of work. The all-awards chart is ordered by start date instead,
+so current work sits together, and each award gets its own bar color with
+a legend; behind-schedule bars keep a red edge. Single-award charts keep
+the lane colors and the progress ramp.
+
 Extracted requirement dates are explicitly a starter plan: top-level SOW
 headings (for example 4.1, 4.2) are spaced sequentially across the
 contract PoP and must be reviewed before confirmation. Confirmed rows

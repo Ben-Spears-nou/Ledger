@@ -2,17 +2,20 @@ import { useEffect, useState } from "react";
 import { api, todayIso } from "../api.js";
 import { MonthGantt } from "./MonthGantt.jsx";
 
-export function WorkGanttChart({ chart, title = "SOW work progress" }) {
+export function WorkGanttChart({ chart, title = "SOW work progress", colorByAward = false }) {
   return (
     <MonthGantt
       chart={chart}
       title={title}
       empty="No confirmed work-plan rows yet."
+      colorByAward={colorByAward}
       rows={(chart?.bars || []).map((bar) => ({
         key: bar.work_plan_item_id,
         label: `${bar.award_short_code} ${
           bar.requirement_code ? `${bar.requirement_code}: ` : ""
         }${bar.title}`,
+        colorKey: bar.award_id,
+        colorLabel: bar.award_short_code,
         lane: bar.lane,
         percentBp: bar.percent_complete_bp,
         startDate: bar.start_date,
@@ -74,8 +77,9 @@ export default function WorkGantt() {
     <>
       <h1>Work progress Gantt</h1>
       <p className="muted">
-        SOW requirements with operator-maintained percent complete. Print this
-        view for monthly reports and presentations.
+        SOW requirements with operator-maintained percent complete. All awards
+        are ordered by start date and colored per award; pick one award for its
+        SOW order. Print this view for monthly reports and presentations.
       </p>
       {error ? <p className="error">{error}</p> : null}
       <div className="card gantt-toolbar">
@@ -106,10 +110,11 @@ export default function WorkGantt() {
       <div className="card">
         <WorkGanttChart
           chart={chart}
+          colorByAward={!awardId}
           title={
             selectedAward
               ? `${selectedAward.short_code} — SOW work progress`
-              : "Portfolio SOW work progress"
+              : "Portfolio SOW work progress (by start date)"
           }
         />
       </div>

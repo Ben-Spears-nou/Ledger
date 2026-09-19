@@ -333,3 +333,58 @@ def test_manual_work_plan_row_appends_and_moves(client: TestClient) -> None:
     chart = client.get(f"/awards/{award_id}/work-gantt", headers=headers).json()
     assert [row["requirement_code"] for row in chart["bars"]] == ["4.2", "4.1", "4.3", "4.11"]
     assert last_extracted_id == reordered[2]["work_plan_item_id"]
+
+
+def test_all_awards_work_gantt_is_ordered_by_start_date(client: TestClient) -> None:
+    admin = login(client)
+    headers = auth_header(admin)
+    plan = {
+        "P13GA": [
+            ("4.1", "GA kickoff", "2026-01-05", "2026-02-28"),
+            ("4.2", "GA closeout", "2026-09-01", "2026-10-31"),
+        ],
+        "P13GB": [
+            ("4.1", "GB kickoff", "2026-03-01", "2026-04-30"),
+            ("4.2", "GB fieldwork", "2026-06-01", "2026-07-31"),
+        ],
+    }
+    for short_code, items in plan.items():
+        award = _award(
+            client,
+            admin,
+            short_code=short_code,
+            type_code="FFP",
+            template="FFP_INTERNAL",
+            oh_pct=0,
+        )
+        for requirement_code, title, start_date, due_date in items:
+            created = client.post(
+                f"/awards/{award['award_id']}/work-plan",
+                json={
+                    "requirement_code": requirement_code,
+                    "title": title,
+                    "start_date": start_date,
+                    "due_date": due_date,
+                    "origin_code": "manual",
+                },
+                headers=headers,
+            )
+            assert created.status_code == 201, created.text
+
+    portfolio = client.get("/work-gantt", params={"as_of": "2026-05-01"}, headers=headers).json()
+    mine = [row for row in portfolio["bars"] if row["award_short_code"] in plan]
+    assert [row["title"] for row in mine] == [
+        "GA kickoff",
+        "GB kickoff",
+        "GB fieldwork",
+        "GA closeout",
+    ]
+    starts = [row["start_date"] for row in mine]
+    assert starts == sorted(starts)
+
+    single = client.get(
+        f"/awards/{mine[0]['award_id']}/work-gantt",
+        params={"as_of": "2026-05-01"},
+        headers=headers,
+    ).json()
+    assert [row["title"] for row in single["bars"]] == ["GA kickoff", "GA closeout"]

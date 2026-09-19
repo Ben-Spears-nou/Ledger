@@ -22,7 +22,7 @@ async function rasterize(image, dataUrl, scale = 2) {
   });
 }
 
-export function MonthGantt({ chart, rows, empty, title }) {
+export function MonthGantt({ chart, rows, empty, title, colorByAward = false }) {
   const [notice, setNotice] = useState("");
   const image = useMemo(() => {
     if (!chart?.chart_start || !chart?.chart_end || !rows?.length) {
@@ -36,9 +36,10 @@ export function MonthGantt({ chart, rows, empty, title }) {
       columns,
       tracked,
       asOfPct: dateOffsetPct(chart.as_of, columns),
+      colorByAward,
       rows: rows.map((row) => ({ ...row, ...barSpan(row.startDate, row.dueDate, columns) })),
     });
-  }, [chart, rows, title]);
+  }, [chart, rows, title, colorByAward]);
 
   if (!image) {
     return <p className="muted">{empty}</p>;

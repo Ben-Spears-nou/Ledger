@@ -1,5 +1,6 @@
 // Draws the month-grid Gantt as a self-contained SVG so the whole chart can be
 // copied or saved as one image for monthly reports.
+import { awardBarColors } from "./awardColors.js";
 import { progressColor } from "./progress.js";
 
 // Kept quote-free so it stays valid inside an XML attribute.
@@ -14,6 +15,9 @@ const MAX_LINES = 3;
 const PAD = 8;
 const TITLE_HEIGHT = 22;
 const CAPTION_HEIGHT = 18;
+const LEGEND_HEIGHT = 17;
+const SWATCH = 9;
+const BEHIND_EDGE = "#8a1f1f";
 
 const LANE_BAR = {
   remaining: "#2f6f9f",
@@ -69,7 +73,15 @@ function wrapLabel(text, maxChars) {
   return lines;
 }
 
-export function buildGanttSvg({ title, caption, columns, rows, asOfPct, tracked }) {
+export function buildGanttSvg({
+  title,
+  caption,
+  columns,
+  rows,
+  asOfPct,
+  tracked,
+  colorByAward = false,
+}) {
   const months = Math.max(columns.length, 1);
   const monthWidth = Math.max(22, Math.min(56, Math.round(640 / months)));
   const trackWidth = months * monthWidth;
@@ -90,9 +102,47 @@ export function buildGanttSvg({ title, caption, columns, rows, asOfPct, tracked 
     return { ...row, lines, top, height };
   });
 
+  // Awards are keyed in row order, so the legend reads top-down like the chart.
+  const awardKeys = [];
+  const awardLabels = new Map();
+  if (colorByAward) {
+    rows.forEach((row) => {
+      if (row.colorKey === undefined || row.colorKey === null) {
+        return;
+      }
+      if (!awardLabels.has(row.colorKey)) {
+        awardKeys.push(row.colorKey);
+        awardLabels.set(row.colorKey, row.colorLabel ?? String(row.colorKey));
+      }
+    });
+  }
+  const colorsFor = (row) => awardBarColors(Math.max(0, awardKeys.indexOf(row.colorKey)));
+
+  // Legend entries flow left to right and wrap, so the chart height can be
+  // settled before anything is drawn.
+  const legendLines = [];
+  if (colorByAward && awardKeys.length > 1) {
+    let line = [];
+    let lineX = 0;
+    awardKeys.forEach((key, index) => {
+      const label = awardLabels.get(key);
+      const entryWidth = SWATCH + 4 + label.length * CHAR_WIDTH + 12;
+      if (line.length && lineX + entryWidth > gridWidth) {
+        legendLines.push(line);
+        line = [];
+        lineX = 0;
+      }
+      line.push({ label, index, x: lineX });
+      lineX += entryWidth;
+    });
+    if (line.length) {
+      legendLines.push(line);
+    }
+  }
+
   const bodyBottom = cursor;
   const width = gridWidth + PAD * 2;
-  const height = bodyBottom + CAPTION_HEIGHT + PAD;
+  const height = bodyBottom + CAPTION_HEIGHT + legendLines.length * LEGEND_HEIGHT + PAD;
 
   const parts = [];
   parts.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`);
@@ -162,16 +212,28 @@ export function buildGanttSvg({ title, caption, columns, rows, asOfPct, tracked 
     const barX = PAD + bodyLeft + (row.leftPct / 100) * trackWidth;
     const barWidth = Math.max(2, (row.widthPct / 100) * trackWidth);
     const isTracked = row.percentBp !== undefined && row.percentBp !== null;
-    const planned = isTracked
-      ? LANE_PLANNED[row.lane] || LANE_PLANNED.remaining
-      : LANE_BAR[row.lane] || LANE_BAR.remaining;
+    const awardColors = colorByAward ? colorsFor(row) : null;
+    let planned;
+    if (awardColors) {
+      planned = isTracked ? awardColors.planned : awardColors.fill;
+    } else {
+      planned = isTracked
+        ? LANE_PLANNED[row.lane] || LANE_PLANNED.remaining
+        : LANE_BAR[row.lane] || LANE_BAR.remaining;
+    }
+    // Award hues replace the lane colors, so behind-schedule rows keep a red edge.
+    const edge =
+      awardColors && row.lane === "behind"
+        ? ` stroke="${BEHIND_EDGE}" stroke-width="1.25"`
+        : "";
     parts.push(
-      `<rect x="${barX.toFixed(2)}" y="${barY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight}" rx="2" fill="${planned}"/>`,
+      `<rect x="${barX.toFixed(2)}" y="${barY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight}" rx="2" fill="${planned}"${edge}/>`,
     );
     if (isTracked && row.percentBp > 0) {
       const fillWidth = Math.max(1, barWidth * (row.percentBp / 10000));
+      const fill = awardColors ? awardColors.fill : progressColor(row.percentBp);
       parts.push(
-        `<rect x="${barX.toFixed(2)}" y="${barY.toFixed(2)}" width="${fillWidth.toFixed(2)}" height="${barHeight}" rx="2" fill="${progressColor(row.percentBp)}"/>`,
+        `<rect x="${barX.toFixed(2)}" y="${barY.toFixed(2)}" width="${fillWidth.toFixed(2)}" height="${barHeight}" rx="2" fill="${fill}"/>`,
       );
     }
   });
@@ -203,6 +265,19 @@ export function buildGanttSvg({ title, caption, columns, rows, asOfPct, tracked 
       `<text x="${PAD}" y="${bodyBottom + 13}" font-family="${FONT}" font-size="10" fill="#5b5647">${escapeXml(caption)}</text>`,
     );
   }
+
+  legendLines.forEach((line, lineIndex) => {
+    const legendTop = bodyBottom + CAPTION_HEIGHT + lineIndex * LEGEND_HEIGHT;
+    line.forEach((entry) => {
+      const x = PAD + entry.x;
+      parts.push(
+        `<rect x="${x.toFixed(2)}" y="${legendTop + 3}" width="${SWATCH}" height="${SWATCH}" rx="2" fill="${awardBarColors(entry.index).fill}"/>`,
+      );
+      parts.push(
+        `<text x="${(x + SWATCH + 4).toFixed(2)}" y="${legendTop + 11}" font-family="${FONT}" font-size="9.5" fill="#5b5647">${escapeXml(entry.label)}</text>`,
+      );
+    });
+  });
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">${parts.join("")}</svg>`;
   return { svg, width, height };

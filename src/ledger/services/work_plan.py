@@ -32,8 +32,7 @@ _REQUIREMENT_HEADING = re.compile(r"(?m)^\s*(\d+\.\d+)\s+([^\n]+?)\s*$")
 _SECTION_START = re.compile(r"(?im)^\s*4\.0\s+REQUIREMENTS(?:\s*\(TASKS\))?.*$")
 _SECTION_END = re.compile(r"(?im)^\s*5\.0\s+")
 _TIMED_TASK = re.compile(
-    r"(?m)^\s*(\d+(?:\.\d+){2,})\s*:\s*(.+?)\s*:\s*"
-    r"(Months?\s*\d+(?:\s*[-–—]\s*\d+)?)\s*$",
+    r"(?m)^\s*(\d+(?:\.\d+){2,})\s*:\s*(.+?)\s*:\s*" r"(Months?\s*\d+(?:\s*[-–—]\s*\d+)?)\s*$",
     re.IGNORECASE,
 )
 _MONTH_TIMING = re.compile(
@@ -460,19 +459,30 @@ def build_gantt(
     award_id: int | None,
     as_of: date | None = None,
 ) -> WorkGanttOut:
-    """Compute presentation geometry and progress fill from work-plan rows."""
+    """Compute presentation geometry and progress fill from work-plan rows.
+
+    One award keeps its SOW order. The portfolio chart is ordered by start date
+    so current work sits together instead of one award block after another.
+    """
     as_of = as_of or datetime.now(UTC).date()
-    query = select(WorkPlanItem).order_by(
-        WorkPlanItem.award_id,
-        WorkPlanItem.sort_order,
-        WorkPlanItem.work_plan_item_id,
-    )
+    query = select(WorkPlanItem)
     if award_id is not None:
         try:
             require_award(session, award_id)
         except ValueError as exc:
             raise WorkPlanError(str(exc)) from exc
-        query = query.where(WorkPlanItem.award_id == award_id)
+        query = query.where(WorkPlanItem.award_id == award_id).order_by(
+            WorkPlanItem.sort_order,
+            WorkPlanItem.work_plan_item_id,
+        )
+    else:
+        query = query.order_by(
+            WorkPlanItem.start_date,
+            WorkPlanItem.due_date,
+            WorkPlanItem.award_id,
+            WorkPlanItem.sort_order,
+            WorkPlanItem.work_plan_item_id,
+        )
     rows = list(session.scalars(query))
     if not rows:
         return WorkGanttOut(as_of=as_of.isoformat(), chart_start=None, chart_end=None, bars=[])
