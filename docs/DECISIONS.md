@@ -856,8 +856,10 @@ As-of today (ISO dates, no float):
 - **behind** — `open` and `due_date < as_of`
 
 Bar start is `start_date` or, for a point item, `due_date`. Bar end is `due_date`.
-The UI at `/gantt` (and the award page) is printable. Employees 403 on
-Gantt APIs. D18 unchanged.
+The UI at `/gantt` (and the award page) is printable. The all-awards chart
+colors bars per award with a legend; behind-schedule bars keep a red edge.
+A single award keeps the completed / remaining / behind lane colors.
+Employees may read Gantt APIs. D18 unchanged.
 
 ---
 
