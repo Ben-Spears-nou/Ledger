@@ -19,6 +19,7 @@ from ledger.models import (
 from ledger.schemas.schedule import (
     AssignmentCreate,
     AssignmentOut,
+    AssignmentUpdate,
     CapacityIn,
     CapacityOut,
     CapacityWeekRow,
@@ -47,6 +48,127 @@ def hours_per_week_to_hundredths(hours: float, *, allow_zero: bool = False) -> i
     return hundredths
 
 
+def hours_per_month_to_hundredths(hours: float) -> int:
+    """Convert monthly hours to integer hundredths."""
+    return hours_per_week_to_hundredths(hours)
+
+
+def monthly_hundredths_from_input(
+    hours_per_month: float | None, hours_per_week: float | None
+) -> int:
+    """Normalize monthly input while accepting legacy weekly API payloads."""
+    if hours_per_month is not None and hours_per_week is not None:
+        raise ScheduleError("provide hours_per_month, not both monthly and weekly hours")
+    if hours_per_month is not None:
+        return hours_per_month_to_hundredths(hours_per_month)
+    if hours_per_week is not None:
+        weekly = hours_per_week_to_hundredths(hours_per_week)
+        return max(1, round(weekly * 52 / 12))
+    raise ScheduleError("hours_per_month is required")
+
+
+def legacy_weekly_hundredths(monthly_hundredths: int) -> int:
+    """Approximate the old weekly value for backward-compatible clients."""
+    return max(1, round(monthly_hundredths * 12 / 52))
+
+
+def _month_bounds(day: date) -> tuple[date, date]:
+    start = day.replace(day=1)
+    next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return start, next_month - timedelta(days=1)
+
+
+def _working_days(start: date, end: date) -> int:
+    if end < start:
+        return 0
+    return sum(
+        1
+        for offset in range((end - start).days + 1)
+        if (start + timedelta(days=offset)).weekday() < 5
+    )
+
+
+def projected_assignment_hundredths(
+    row: Assignment, range_start: date, range_end: date
+) -> int:
+    """Prorate a monthly plan over working days in a date range."""
+    active_start = max(range_start, date.fromisoformat(row.effective_from))
+    active_end = min(
+        range_end,
+        date.fromisoformat(row.effective_to) if row.effective_to else range_end,
+    )
+    if active_end < active_start:
+        return 0
+    total = 0
+    cursor = active_start.replace(day=1)
+    while cursor <= active_end:
+        month_start, month_end = _month_bounds(cursor)
+        covered_start = max(active_start, month_start)
+        covered_end = min(active_end, month_end)
+        month_days = _working_days(month_start, month_end)
+        covered_days = _working_days(covered_start, covered_end)
+        if month_days:
+            total += round(row.hours_hundredths_per_month * covered_days / month_days)
+        cursor = month_end + timedelta(days=1)
+    return total
+
+
+def projected_assignment_for_week(row: Assignment, week_start: str) -> int:
+    """Projected assignment hours for one Monday-through-Sunday week."""
+    monday = date.fromisoformat(week_start_on_or_before(week_start))
+    return projected_assignment_hundredths(row, monday, monday + timedelta(days=6))
+
+
+def projected_assignment_for_month(row: Assignment, month_date: str) -> int:
+    """Projected assignment hours in the calendar month containing a date."""
+    month_start, month_end = _month_bounds(date.fromisoformat(month_date))
+    return projected_assignment_hundredths(row, month_start, month_end)
+
+
+def assigned_hundredths_for_month(
+    session: Session, person_id: int, award_id: int, month_date: str
+) -> int:
+    """Total monthly plan for one person and award, prorated for dated rows."""
+    month_start, month_end = _month_bounds(date.fromisoformat(month_date))
+    rows = session.scalars(
+        select(Assignment).where(
+            Assignment.person_id == person_id,
+            Assignment.award_id == award_id,
+            Assignment.effective_from <= month_end.isoformat(),
+            or_(
+                Assignment.effective_to.is_(None),
+                Assignment.effective_to >= month_start.isoformat(),
+            ),
+        )
+    ).all()
+    return sum(projected_assignment_for_month(row, month_start.isoformat()) for row in rows)
+
+
+def _day_before(iso_date: str) -> str:
+    parsed = date.fromisoformat(iso_date)
+    return (parsed - timedelta(days=1)).isoformat()
+
+
+def reopen_dated_predecessor(rows: list, deleted) -> None:
+    """If ``deleted`` had closed a previous open row, repair that predecessor (D45)."""
+    predecessors = [
+        row for row in rows if row.effective_from < deleted.effective_from and row.effective_to
+    ]
+    if not predecessors:
+        return
+    prev = max(predecessors, key=lambda row: row.effective_from)
+    closed_on = _day_before(deleted.effective_from)
+    if prev.effective_to not in {closed_on, deleted.effective_from}:
+        return
+    later = [row for row in rows if row.effective_from > prev.effective_from]
+    if not later:
+        prev.effective_to = None
+        return
+    nxt = min(later, key=lambda row: row.effective_from)
+    closed = _day_before(nxt.effective_from)
+    prev.effective_to = closed if closed >= prev.effective_from else nxt.effective_from
+
+
 def serialize_task(task: Task) -> TaskCardOut:
     """Slim task DTO — no money (D22)."""
     return TaskCardOut(
@@ -65,7 +187,12 @@ def serialize_assignment(row: Assignment) -> AssignmentOut:
         person_id=row.person_id,
         award_id=row.award_id,
         task_id=row.task_id,
-        hours_per_week=hundredths_to_hours(row.hours_hundredths_per_week),
+        hours_per_month=hundredths_to_hours(row.hours_hundredths_per_month),
+        hours_per_week=(
+            hundredths_to_hours(row.hours_hundredths_per_week)
+            if row.hours_hundredths_per_week is not None
+            else None
+        ),
         effective_from=row.effective_from,
         effective_to=row.effective_to,
     )
@@ -179,6 +306,32 @@ def update_task(session: Session, task: Task, payload: TaskUpdate) -> Task:
     return task
 
 
+def delete_task(session: Session, task: Task, *, actor_id: int | None) -> None:
+    """Remove an unused task (D45). Close remains for used tasks."""
+    if session.scalar(
+        select(TimesheetLine.timesheet_line_id)
+        .where(TimesheetLine.task_id == task.task_id)
+        .limit(1)
+    ):
+        raise ScheduleError("cannot delete a task that has timesheet lines")
+    if session.scalar(
+        select(Assignment.assignment_id).where(Assignment.task_id == task.task_id).limit(1)
+    ):
+        raise ScheduleError("cannot delete a task that has assignments")
+    task_id = task.task_id
+    award_id = task.award_id
+    session.delete(task)
+    session.flush()
+    record_event(
+        session,
+        action="task_delete",
+        entity_type="task",
+        entity_id=task_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )
+
+
 def close_open_assignments(
     session: Session,
     person_id: int,
@@ -219,7 +372,10 @@ def create_assignment(
             raise ScheduleError("cannot assign to a closed task")
     if payload.effective_to is not None and payload.effective_to < payload.effective_from:
         raise ScheduleError("effective_to must be on or after effective_from")
-    hundredths = hours_per_week_to_hundredths(payload.hours_per_week)
+    payload_data = payload.model_dump()
+    hundredths = monthly_hundredths_from_input(
+        payload_data.get("hours_per_month"), payload_data.get("hours_per_week")
+    )
     close_open_assignments(
         session, payload.person_id, payload.award_id, task_id, payload.effective_from
     )
@@ -227,7 +383,8 @@ def create_assignment(
         person_id=payload.person_id,
         award_id=payload.award_id,
         task_id=task_id,
-        hours_hundredths_per_week=hundredths,
+        hours_hundredths_per_week=legacy_weekly_hundredths(hundredths),
+        hours_hundredths_per_month=hundredths,
         effective_from=payload.effective_from,
         effective_to=payload.effective_to,
         created_by=actor_id,
@@ -247,6 +404,66 @@ def create_assignment(
         },
     )
     return row
+
+
+def update_assignment(
+    session: Session, row: Assignment, payload: AssignmentUpdate, *, actor_id: int | None
+) -> Assignment:
+    """End or revise planned hours. Does not post."""
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise ScheduleError("hours_per_month or effective_to is required")
+    if data.get("hours_per_month") is not None or data.get("hours_per_week") is not None:
+        monthly = monthly_hundredths_from_input(
+            data.get("hours_per_month"), data.get("hours_per_week")
+        )
+        row.hours_hundredths_per_month = monthly
+        row.hours_hundredths_per_week = legacy_weekly_hundredths(monthly)
+    if "effective_to" in data:
+        value = data["effective_to"]
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ScheduleError("effective_to must be YYYY-MM-DD") from exc
+            if value < row.effective_from:
+                raise ScheduleError("effective_to must be on or after effective_from")
+            row.effective_to = value
+        else:
+            row.effective_to = None
+    session.flush()
+    record_event(
+        session,
+        action="assignment_update",
+        entity_type="assignment",
+        entity_id=row.assignment_id,
+        actor_user_id=actor_id,
+        detail={"person_id": row.person_id, "award_id": row.award_id},
+    )
+    return row
+
+
+def delete_assignment(session: Session, row: Assignment, *, actor_id: int | None) -> None:
+    """Remove a planned assignment and reopen the predecessor (D45)."""
+    siblings = [
+        item
+        for item in list_assignments(session, person_id=row.person_id, award_id=row.award_id)
+        if item.assignment_id != row.assignment_id and item.task_id == row.task_id
+    ]
+    assignment_id = row.assignment_id
+    person_id = row.person_id
+    award_id = row.award_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="assignment_delete",
+        entity_type="assignment",
+        entity_id=assignment_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id, "award_id": award_id},
+    )
 
 
 def list_assignments(
@@ -293,30 +510,11 @@ def overlapping_assignments(session: Session, person_id: int, week_start: str) -
 
 
 def prefill_period_from_assignments(session: Session, period) -> None:
-    """Copy overlapping assignments onto a newly created empty draft (D7, D23)."""
+    """Monthly assignments inform the week but do not invent daily time."""
     from ledger.models import TimesheetPeriod
 
     if not isinstance(period, TimesheetPeriod):
         return
-    if period.status_code != "draft":
-        return
-    existing = session.scalars(
-        select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
-    ).first()
-    if existing is not None:
-        return
-    for row in overlapping_assignments(session, period.person_id, period.week_start):
-        session.add(
-            TimesheetLine(
-                timesheet_period_id=period.timesheet_period_id,
-                work_date=period.week_start,
-                hours_hundredths=row.hours_hundredths_per_week,
-                time_code="award",
-                award_id=row.award_id,
-                task_id=row.task_id,
-            )
-        )
-    session.flush()
 
 
 def close_open_capacity(session: Session, person_id: int, new_from: str) -> None:
@@ -363,6 +561,28 @@ def add_person_capacity(
     return row
 
 
+def delete_person_capacity(session: Session, row: PersonCapacity, *, actor_id: int | None) -> None:
+    """Remove a capacity row and reopen the predecessor (D45)."""
+    siblings = [
+        item
+        for item in list_capacity(session, row.person_id)
+        if item.person_capacity_id != row.person_capacity_id
+    ]
+    capacity_id = row.person_capacity_id
+    person_id = row.person_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="capacity_delete",
+        entity_type="person_capacity",
+        entity_id=capacity_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id},
+    )
+
+
 def list_capacity(session: Session, person_id: int) -> list[PersonCapacity]:
     """Dated capacity rows for one person."""
     return list(
@@ -386,6 +606,11 @@ def _as_of_capacity(session: Session, person_id: int, as_of: str) -> PersonCapac
     )
 
 
+def as_of_capacity(session: Session, person_id: int, as_of: str) -> PersonCapacity | None:
+    """Capacity row in effect on ``as_of``."""
+    return _as_of_capacity(session, person_id, as_of)
+
+
 def capacity_for_week(session: Session, week_start: str) -> list[CapacityWeekRow]:
     """Planned vs capacity hours for every person with a login."""
     monday = week_start_on_or_before(week_start)
@@ -402,7 +627,7 @@ def capacity_for_week(session: Session, week_start: str) -> list[CapacityWeekRow
         cap = _as_of_capacity(session, person.person_id, monday)
         capacity_hours = hundredths_to_hours(cap.hours_hundredths_per_week) if cap else 0.0
         planned_hundredths = sum(
-            row.hours_hundredths_per_week
+            projected_assignment_for_week(row, monday)
             for row in overlapping_assignments(session, person.person_id, monday)
         )
         planned_hours = hundredths_to_hours(planned_hundredths)

@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_current_user, get_db, require_admin
-from ledger.models import Award, Task, UserAccount
+from ledger.models import Assignment, Award, Task, UserAccount
 from ledger.schemas.schedule import (
     AssignmentCreate,
     AssignmentOut,
+    AssignmentUpdate,
     CapacityWeekRow,
     TaskCardOut,
     TaskCreate,
@@ -20,10 +21,13 @@ from ledger.services.schedule import (
     capacity_for_week,
     create_assignment,
     create_task,
+    delete_assignment,
+    delete_task,
     list_assignments,
     list_tasks,
     serialize_assignment,
     serialize_task,
+    update_assignment,
     update_task,
 )
 
@@ -34,7 +38,10 @@ capacity_router = APIRouter(tags=["schedule"])
 
 
 def _http(exc: ScheduleError) -> HTTPException:
-    return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    message = str(exc)
+    if "cannot delete" in message:
+        return HTTPException(status.HTTP_409_CONFLICT, message)
+    return HTTPException(status.HTTP_400_BAD_REQUEST, message)
 
 
 def _get_award(session: Session, award_id: int) -> Award:
@@ -97,6 +104,24 @@ def patch_award_task(
     return serialize_task(task)
 
 
+@award_tasks_router.delete("/{award_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_award_task(
+    award_id: int,
+    task_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused task (D45). Close remains for used tasks."""
+    _get_award(session, award_id)
+    task = session.get(Task, task_id)
+    if task is None or task.award_id != award_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
+    try:
+        delete_task(session, task, actor_id=admin.user_account_id)
+    except ScheduleError as exc:
+        raise _http(exc) from exc
+
+
 @tasks_router.get("", response_model=list[TaskCardOut])
 def get_tasks(
     award_id: int | None = None,
@@ -144,6 +169,40 @@ def post_assignment(
         raise _http(exc) from exc
     session.flush()
     return serialize_assignment(row)
+
+
+@assignments_router.patch("/{assignment_id}", response_model=AssignmentOut)
+def patch_assignment(
+    assignment_id: int,
+    payload: AssignmentUpdate,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> AssignmentOut:
+    """End or revise planned hours (admin)."""
+    row = session.get(Assignment, assignment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "assignment not found")
+    try:
+        row = update_assignment(session, row, payload, actor_id=admin.user_account_id)
+    except ScheduleError as exc:
+        raise _http(exc) from exc
+    return serialize_assignment(row)
+
+
+@assignments_router.delete("/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_assignment(
+    assignment_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete a planned assignment and reopen the predecessor (D45)."""
+    row = session.get(Assignment, assignment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "assignment not found")
+    try:
+        delete_assignment(session, row, actor_id=admin.user_account_id)
+    except ScheduleError as exc:
+        raise _http(exc) from exc
 
 
 @capacity_router.get("/capacity", response_model=list[CapacityWeekRow])

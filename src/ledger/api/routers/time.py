@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import display_name_for, get_current_user, get_db, require_admin
-from ledger.models import Person, TimesheetLine, TimesheetPeriod, UserAccount
+from ledger.models import Person, PersonRate, TimesheetLine, TimesheetPeriod, UserAccount
 from ledger.schemas.time import (
     PersonRateIn,
     PersonRateOut,
@@ -20,10 +20,13 @@ from ledger.schemas.time import (
     WeekOut,
     WeekPut,
 )
+from ledger.services.operations import planned_hours_for_week
 from ledger.services.time import (
     TimeError,
     add_person_rate,
     approve_period,
+    approve_warnings,
+    delete_person_rate,
     get_or_create_period,
     hundredths_to_hours,
     period_hours_total,
@@ -31,6 +34,7 @@ from ledger.services.time import (
     replace_week_lines,
     return_period,
     submit_period,
+    unapprove_period,
 )
 
 me_router = APIRouter(prefix="/me", tags=["time"])
@@ -41,7 +45,7 @@ rates_router = APIRouter(tags=["people"])
 def _http(exc: TimeError, conflict: bool = False) -> HTTPException:
     code = status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST
     message = str(exc).lower()
-    if "already" in message or "exceed" in message:
+    if "already" in message or "exceed" in message or "cannot delete" in message:
         code = status.HTTP_409_CONFLICT
     return HTTPException(code, str(exc))
 
@@ -70,6 +74,7 @@ def _employee_week(session: Session, period: TimesheetPeriod) -> WeekOut:
             )
             for line in lines
         ],
+        planned=planned_hours_for_week(session, period.person_id, period.week_start),
     )
 
 
@@ -120,6 +125,7 @@ def _admin_week(session: Session, period: TimesheetPeriod) -> WeekAdminOut:
         hours_total=period_hours_total(session, period),
         amount_cents=total_amount,
         lines=admin_lines,
+        warnings=approve_warnings(session, period),
     )
 
 
@@ -149,6 +155,7 @@ def put_my_week(
             session,
             period,
             [line.model_dump() for line in payload.lines],
+            actor_id=user.user_account_id,
         )
     except TimeError as exc:
         raise _http(exc) from exc
@@ -171,17 +178,90 @@ def submit_my_week(
     return _employee_week(session, period)
 
 
+def _require_person(session: Session, person_id: int) -> Person:
+    person = session.get(Person, person_id)
+    if person is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "person not found")
+    return person
+
+
+@rates_router.get("/people/{person_id}/week", response_model=WeekOut)
+def get_person_week(
+    person_id: int,
+    week_start: str | None = None,
+    session: Session = Depends(get_db),
+    _admin: UserAccount = Depends(require_admin),
+) -> WeekOut:
+    """Admin My-week view for any person (hours only)."""
+    _require_person(session, person_id)
+    start = week_start or datetime.now(UTC).date().isoformat()
+    period = get_or_create_period(session, person_id, start, prefill=True)
+    return _employee_week(session, period)
+
+
+@rates_router.put("/people/{person_id}/week", response_model=WeekOut)
+def put_person_week(
+    person_id: int,
+    payload: WeekPut,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WeekOut:
+    """Replace another person's draft, returned, or submitted week."""
+    _require_person(session, person_id)
+    start = payload.week_start or datetime.now(UTC).date().isoformat()
+    period = get_or_create_period(session, person_id, start)
+    try:
+        replace_week_lines(
+            session,
+            period,
+            [line.model_dump() for line in payload.lines],
+            actor_id=admin.user_account_id,
+            allow_submitted=True,
+        )
+    except TimeError as exc:
+        raise _http(exc) from exc
+    return _employee_week(session, period)
+
+
+@rates_router.post("/people/{person_id}/week/submit", response_model=WeekOut)
+def submit_person_week(
+    person_id: int,
+    week_start: str | None = None,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WeekOut:
+    """Submit another person's week to the approval queue."""
+    _require_person(session, person_id)
+    start = week_start or datetime.now(UTC).date().isoformat()
+    period = get_or_create_period(session, person_id, start)
+    try:
+        submit_period(session, period, actor_id=admin.user_account_id)
+    except TimeError as exc:
+        raise _http(exc) from exc
+    return _employee_week(session, period)
+
+
 @approvals_router.get("", response_model=list[WeekAdminOut])
 def list_approvals(
+    status_code: str = Query(default="submitted", alias="status"),
     session: Session = Depends(get_db),
     _admin: UserAccount = Depends(require_admin),
 ) -> list[WeekAdminOut]:
-    """Submitted weeks waiting on the sole approver."""
-    periods = session.scalars(
-        select(TimesheetPeriod)
-        .where(TimesheetPeriod.status_code == "submitted")
-        .order_by(TimesheetPeriod.week_start, TimesheetPeriod.person_id)
-    ).all()
+    """Submitted weeks waiting, or already-approved weeks that can be unapproved."""
+    if status_code not in {"submitted", "approved"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "status must be submitted or approved")
+    order = (
+        TimesheetPeriod.approved_at.desc()
+        if status_code == "approved"
+        else TimesheetPeriod.week_start
+    )
+    periods = list(
+        session.scalars(
+            select(TimesheetPeriod)
+            .where(TimesheetPeriod.status_code == status_code)
+            .order_by(order, TimesheetPeriod.person_id)
+        )
+    )
     return [_admin_week(session, period) for period in periods]
 
 
@@ -235,6 +315,26 @@ def bounce_week(
     return _admin_week(session, period)
 
 
+@approvals_router.post("/{period_id}/unapprove", response_model=WeekAdminOut)
+def unapprove_week(
+    period_id: int,
+    payload: ReturnWeekIn,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WeekAdminOut:
+    """Reverse posted labor and return the week for recoding."""
+    period = session.get(TimesheetPeriod, period_id)
+    if period is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "timesheet not found")
+    try:
+        unapprove_period(
+            session, period, payload.comment, actor_id=admin.user_account_id
+        )
+    except TimeError as exc:
+        raise _http(exc) from exc
+    return _admin_week(session, period)
+
+
 @rates_router.get("/people/{person_id}/rates", response_model=list[PersonRateOut])
 def list_rates(
     person_id: int,
@@ -242,8 +342,6 @@ def list_rates(
     _admin: UserAccount = Depends(require_admin),
 ) -> list[PersonRateOut]:
     """Dated base rates for one person."""
-    from ledger.models import PersonRate
-
     person = session.get(Person, person_id)
     if person is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "person not found")
@@ -300,3 +398,23 @@ def post_rate(
         base_rate_cents=row.base_rate_cents,
         hours_per_year=row.hours_per_year,
     )
+
+
+@rates_router.delete("/people/{person_id}/rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_rate(
+    person_id: int,
+    rate_id: int,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> None:
+    """Delete an unused base rate and reopen the predecessor (D45)."""
+    person = session.get(Person, person_id)
+    if person is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "person not found")
+    row = session.get(PersonRate, rate_id)
+    if row is None or row.person_id != person_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "rate not found")
+    try:
+        delete_person_rate(session, row, actor_id=admin.user_account_id)
+    except TimeError as exc:
+        raise _http(exc) from exc

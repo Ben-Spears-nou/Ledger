@@ -4,7 +4,7 @@ This is the authoritative, phased specification. Build the phases **in order**.
 Each phase lists Tasks and Acceptance Criteria. A phase is **Done** only when
 every acceptance criterion passes and its tests are green.
 
-`docs/DECISIONS.md` is the product source of truth (D1–D27). When `db/schema.sql`
+`docs/DECISIONS.md` is the product source of truth (D1–D49). When `db/schema.sql`
 exists, it is the data-model source of truth — mirror it; do not invent, rename,
 or drop columns without proposing the change in `DECISIONS.md` first.
 
@@ -14,8 +14,7 @@ or drop columns without proposing the change in `DECISIONS.md` first.
 > Employees log their own hours. Ledger is **not** the official accounting book.
 > See `docs/DECISIONS.md`.
 
-**This document specifies Phases 0–4.** Phases 5–7 stay listed at the
-bottom so they are not forgotten; do not implement them until 4 is Done.
+**This document specifies Phases 0–13.**
 
 ---
 
@@ -29,7 +28,7 @@ bottom so they are not forgotten; do not implement them until 4 is Done.
   `config.py`, `db/`, `models/`, `schemas/`, `api/`.
 - Load configuration from `.env` (copy `.env.example`).
 - Add a `Makefile` (or `tasks.py`) with `install`, `lint`, `test`, `run`,
-  `db-init`.
+  `db-init` (`build-ui` and `backup` were added later).
 - Add `.gitignore` covering `.env*`, `venv/`, `__pycache__/`, `data/`,
   local SQLite files, and node_modules (for the later UI).
 - Scaffold an empty React + Vite app under `web/` **or** defer the UI folder
@@ -317,7 +316,7 @@ only to the HTTP API (`localhost:5173` → `:8000`). No Phase 3–7 routes.
 
 ---
 
-## Phase 3 — Tasks, assignments, capacity, My week prefill
+## Phase 3 — Tasks, monthly assignments, capacity, My week planning
 
 Schedule proposes; the timesheet records (D7). Do not build Phase 4–7 here.
 
@@ -360,12 +359,12 @@ person_capacity
 ### Assignments
 
 - Admin assigns a person to an award, optional task, date range, and
-  **planned hours per week** (`hours_hundredths_per_week`).
+  **planned hours per month** (`hours_hundredths_per_month`).
 - Revisions are new rows; close the previous open row for the same
   person + award + task (D5 pattern). Do not edit posted charges.
-- Overlap with a week: `effective_from <= week_end` and
-  (`effective_to` is null or `>= week_start`). If it overlaps at all, the
-  full weekly hours prefill — do not prorate (D23).
+- Monthly hours are prorated over calendar-month working weekdays when a
+  weekly staffing projection is needed. Weeks crossing month boundaries use
+  each month's applicable share.
 - Cannot assign to a `closed` award or `closed` task.
 - Employee `GET /assignments` is **own rows only**. Admin lists all.
   Payload is hours + award/task ids, not dollars.
@@ -376,18 +375,18 @@ person_capacity
   `person_rate`. Zero is allowed (unassigned / leave). Revisions close the
   previous open row.
 - Admin `GET /capacity?week_start=` returns, per person with a login:
-  capacity hours, planned hours (sum of overlapping assignment weeks),
-  and `over_capacity` (planned > capacity). Informational only (D10, D24).
+  capacity hours, projected planned hours (monthly plans prorated to the week),
+  and `over_capacity` (projected plan > capacity). Informational only (D10, D24).
 - Employees cannot read `/capacity` or another person's capacity rows.
 
-### My week prefill (D7, D10)
+### My week monthly plan (D7, D10)
 
-- `GET /me/week` on a **newly created** empty draft copies overlapping
-  assignments into lines: `time_code=award`, `award_id`, optional `task_id`,
-  `work_date=week_start` (Monday), hours = that assignment’s weekly hours.
-- Skip closed awards/tasks. Skip assignments that do not overlap.
-- **Do not** prefill when the period already existed (employee cleared
-  lines, or already saved). **Do not** auto-submit or auto-post charges.
+- `GET /me/week` shows monthly planned, logged, and remaining hours for
+  overlapping assignments. It does not create timesheet lines or invent a
+  work date.
+- A week crossing a month boundary shows both months. Each actual line counts
+  toward the month containing its `work_date`.
+- **Do not** auto-submit or auto-post charges.
 - Employee may edit, delete, add PTO, or submit 0 / 3 / 60 hours. Submit
   must not require matching assignments.
 - `PUT /me/week` accepts optional `task_id`. Extra unknown fields stay
@@ -397,7 +396,7 @@ person_capacity
 
 ### API / UI (minimum)
 
-- `/me/week` — optional task select (filtered by selected award); prefill.
+- `/me/week` — optional task select (filtered by selected award); monthly plan progress.
 - `/awards/:id` — admin: tasks and assignments for this award.
 - `/people` — admin: dated capacity, assignments, planned vs capacity for
   a week. Base-rate POST remains the existing `/people/{id}/rates` API
@@ -412,12 +411,11 @@ person_capacity
   DTOs; `GET /awards` employee card keys are **unchanged** (D18).
 - Employee cannot `POST` tasks, assignments, or capacity (403).
 - Employee A cannot `GET` employee B’s assignments or capacity.
-- Empty first `GET /me/week` for a week covered by an assignment prefills
-  hours + award + task; a second assignment on another award adds a second
-  line; dollars are absent from the payload.
+- Empty first `GET /me/week` for a week covered by an assignment leaves time
+  lines empty and shows monthly plans for each award/task; dollars are absent.
 - Saving a week, then changing assignments, does **not** rewrite the saved
   week on the next GET.
-- Employee can submit a week that ignores the prefill (different hours or
+- Employee can submit a week that differs from the monthly plan (different hours or
   awards). Approve still posts labor $ from the award policy (D11), not
   from planned hours. Assignments never insert `charge` rows.
 - Closed award / closed task reject new assignments and new time lines.
@@ -528,27 +526,494 @@ instrument_share
 - Closed/pipeline awards reject new purchases.
 - `python tasks.py lint` and `python tasks.py test` stay green, including
   Phase 0–3.
-- Phase 5 is still “do not build” in this document.
+- Phase 5 documents wait for this phase to be Done.
 
 ---
 
-## Later phases (do not build yet)
+## LAN browser access (D28) — not a numbered phase
 
-Recorded so Phase 4 does not “helpfully” grow into them.
+After Phase 4, teammates need one URL on the host machine. This is not
+Phase 6–7.
 
-| Phase | Scope |
-|---|---|
-| 5 | Document register, award-scoped files, compliance dates |
-| 6 | Pipeline nodes, burn/EAC/runway, 75% and PoP alerts |
-| 7 | Audit log UI, convenience CSV of charges — still not QuickBooks |
+**Tasks**
 
-UI map for orientation (implement screens only when the phase needs them):
+- Record D28. Default bind stays `127.0.0.1`.
+- `python tasks.py build-ui` runs `npm run build` in `web/`.
+- FastAPI serves `web/dist/` when `index.html` exists: HTML navigation
+  gets the SPA; JSON `fetch` still hits the API (same paths as Vite’s
+  `bypass` for `text/html`).
+- `tasks.py run` reads `LEDGER_API_HOST` / `LEDGER_API_PORT`. Refuse
+  non-loopback bind if `LEDGER_SECRET_KEY` is the shipped default.
+  `--reload` only on loopback.
+- UI `fetch` uses `window.location.origin` unless `VITE_API_URL` is set.
+- README: build UI, opt-in `0.0.0.0`, firewall, URL `http://<host>:8000`.
+- `python tasks.py pack` writes `dist/ledger-team/` (start script + built UI)
+  for a second team lead’s own instance.
+
+**Acceptance criteria**
+
+- Default `LEDGER_API_HOST` is `127.0.0.1`; tests stay green without a
+  built UI.
+- With a fixture `web/dist`, `GET /login` with `Accept: text/html` is
+  the SPA; `GET /health` stays JSON; JSON `GET /awards` is still the API.
+- `python tasks.py lint` and `python tasks.py test` stay green.
+- Phase 7 is specified in this document.
+
+---
+
+## Phase 5 — Documents, award files, compliance dates
+
+A register of award documents with optional files on local disk, plus
+dated compliance obligations (D29–D31). Do not build Phase 7 here.
+Not a document-management product. Files are not remaining money (D4).
+
+**Tasks**
+
+### Schema
+
+- Propose D29–D31 in `DECISIONS.md`, then add tables to `db/schema.sql`.
+  Alembic `0006_phase5_documents`. Do not change remaining views.
+- `db-init` must apply `CREATE INDEX` **after** `ensure_phase3_schema` so
+  existing `timesheet_line` rows without `task_id` can be altered first.
+- New objects only:
+
+```
+document_kind
+compliance_kind
+compliance_status
+document
+compliance_item
+```
+
+### Documents
+
+- Admin `POST /awards/{id}/documents` JSON: `kind_code`, `title`, optional
+  `document_date`, `notes`. Pipeline and closed awards are allowed.
+- Admin `POST /documents/{id}/file` multipart field `file`. Store under
+  `LEDGER_DATA_DIR/documents/{award_id}/`. 20 MiB cap. Suffix whitelist
+  (D29). Replacing a file is a new document row, not an overwrite (D5);
+  v1: one file per document; second upload is 409.
+- Admin `GET /awards/{id}/documents`, `GET /documents/{id}`,
+  `GET /documents/{id}/file` (authenticated download).
+- Employees 403. D18 card unchanged. Remaining cents unchanged.
+
+### Compliance
+
+- Admin `POST /awards/{id}/compliance`: `kind_code`, `title`, `due_date`,
+  optional `notes`. Status starts `open`.
+- Admin `PATCH /compliance/{id}`: `status_code` (`open` | `done` |
+  `waived`) and optional `notes`. `done` sets `completed_at`.
+- Admin `GET /awards/{id}/compliance` and `GET /compliance` (optional
+  `due_from`, `due_to`, `status_code`, `award_id`) ordered by `due_date`.
+- Employees 403. No email, no 75% burn alerts (Phase 6).
+
+### API / UI (minimum)
+
+- `/awards/:id` — admin: document list, add metadata, attach file,
+  download; compliance list, add due date, mark done/waived.
+- `/compliance` — admin calendar across awards.
+- Vite proxy `/documents`, `/compliance` (HTML bypass for `/compliance`).
+- Lookups: `document_kinds`, `compliance_kinds`, `compliance_statuses`
+  (admin `/lookups` only).
+
+**Acceptance criteria**
+
+- ORM matches `schema.sql`; Alembic head is `0006_phase5_documents`.
+- Document without file lists; upload then download returns the bytes.
+- Oversize or bad suffix is 400; second file on the same row is 409.
+- Employee 403 on documents, file, and compliance. D18 keys unchanged.
+- Creating a document does not change `remaining_approved_cents`.
+- Compliance `done` sets `completed_at`; calendar `GET /compliance`
+  returns the item by `due_date`.
+- `db-init` succeeds on a pre-Phase-3 `timesheet_line` (no `task_id`
+  column) without `--force`.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–4.
+- Phase 7 is specified in this document.
+
+---
+
+## Phase 6 — Pipeline, burn/EAC/runway, 75% and PoP alerts
+
+Forecast nodes plus integer burn projections and in-app alerts (D32–D34).
+Do not build Phase 7 here. Not EVM. Not email.
+
+**Tasks**
+
+### Schema
+
+- Propose D32–D34 in `DECISIONS.md`, then add tables to `db/schema.sql`.
+  Alembic `0007_phase6_pipeline_burn`. Remaining formulas stay D4; do not
+  subtract pipeline cents.
+- New objects:
+
+```
+pipeline_kind
+pipeline_node
+v_award_burn_monthly
+```
+
+### Pipeline
+
+- Admin `POST /awards/{id}/pipeline`: `kind_code`, `title`, `amount_cents`,
+  optional `expected_date`, `notes`. Closed awards 400. Pipeline status
+  allowed.
+- Admin `GET /awards/{id}/pipeline`, `GET /pipeline`,
+  `PATCH /pipeline/{id}`, `DELETE /pipeline/{id}`.
+- Employees 403. D18 unchanged. Remaining approved/funded unchanged.
+  `pipeline_cents` is a separate figure.
+
+### Burn / EAC / runway
+
+- Admin `GET /awards/{id}/burn` optional `as_of`. Monthly actuals from
+  `v_award_burn_monthly`; EAC and runway per D33.
+- Employees 403.
+
+### Alerts
+
+- Admin `GET /alerts` optional `as_of`, `award_id`. Computed `burn_ceiling`
+  and `pop_end` (D34). No table, no email.
+- Employees 403.
+
+### API / UI (minimum)
+
+- `/awards/:id` — admin: pipeline list/add/edit/delete; monthly burn, EAC,
+  runway; alert flags for that award.
+- `/alerts` — admin list across awards.
+- `/portfolio` — flag awards that have an alert.
+- Vite proxy `/pipeline`, `/alerts` (HTML bypass for `/alerts`).
+- Lookups: `pipeline_kinds` (admin `/lookups` only).
+
+**Acceptance criteria**
+
+- ORM matches `schema.sql`; Alembic head is `0007_phase6_pipeline_burn`.
+- Creating a pipeline node does not change `remaining_approved_cents`.
+- Monthly burn sums posted charges by `YYYY-MM` of `work_date`.
+- EAC uses integer daily burn × days left in PoP (D33).
+- CPFF `burn_ceiling` fires at `ceiling_warn_pct` of funded; a day 31
+  before `pop_end` is not a `pop_end` alert; day 30 is.
+- Employee 403 on pipeline, burn, and alerts. D18 keys unchanged.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–5.
+- Phase 7 is specified next in this document.
+
+---
+
+## Phase 7 — Audit log UI and charges CSV
+
+A read-only event list and a convenience dump of posted charges (D35–D36).
+Not QuickBooks. No new tables. Do not add GL mapping columns.
+
+**Tasks**
+
+- Record D35–D36. Do not change `db/schema.sql` or Alembic head
+  (`0007_phase6_pipeline_burn`).
+- Admin `GET /admin/audit` optional `action`, `entity_type`,
+  `occurred_from`, `occurred_to`, `limit` (default 500, max 2000). Newest
+  first. Existing JSON keys stay. Optional `actor_display_name`.
+- Admin `GET /admin/charges.csv` optional `award_id`, `work_from`,
+  `work_to`. `text/csv`. Columns from `charge` plus `award_short_code`.
+  Integer cents. Bearer token, not a public URL.
+- Employees 403. D18 unchanged. No PATCH/DELETE on `audit_event`.
+- `/audit` — admin list + filters; button to download the charges CSV.
+- Vite: `/audit` is an SPA route (API stays `/admin/audit`).
+
+**Acceptance criteria**
+
+- No new tables; Alembic head remains `0007_phase6_pipeline_burn`.
+- Admin audit list includes `week_approve` after an approve; `action`
+  filter returns only that action.
+- Charges CSV has a header and the posted `amount_cents`; employee 403.
+- Employee 403 on `/admin/audit`. D18 keys unchanged.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–6.
+
+---
+
+## Phase 8 — Admin intake UI (replace `/docs` for daily work)
+
+Admins create people, rates, and awards in the React app, then record mods
+and rate-policy revisions on the award page. Audit filters are dropdowns.
+No new tables. Do not add GL, email, or `/docs` as a required operator
+path (D37). FastAPI `/docs` may remain for debugging.
+
+**Tasks**
+
+- Record D37. Do not change `db/schema.sql` or Alembic head
+  (`0007_phase6_pipeline_burn`).
+- Admin `GET /lookups` includes `audit_actions` and `audit_entity_types`
+  (known vocabularies, not a table). Employees still get `time_codes` only
+  (D18).
+- `/people` — admin: create a person (optional login), set a dated base
+  rate (hourly dollars or salary + hours/year). Capacity and assignments
+  stay. Dollars in the UI; cents on the wire.
+- `/awards/new` — admin wizard: identity, classification, dates, money,
+  rate recipe (template + percents), budget lines from the type template.
+  Agency is a pick-or-type field (D1). CLINs stay optional/API. After save,
+  go to `/awards/:id`.
+- `/portfolio` — **New award** link. Existing cards unchanged.
+- `/awards/:id` — admin: patch header (title, agency, status,
+  funded-through); record a mod (money / PoP / budget line amounts); revise
+  the rate policy (new dated row, D5). Dollars and percent points in the UI.
+- `/audit` — Action and Entity are `<select>`s from lookups, not free text.
+  Charges CSV may filter by award (picker) and work dates.
+- Vite: `/awards/new` is an SPA route registered before `/awards/:id`.
+
+**Acceptance criteria**
+
+- No new tables; Alembic head remains `0007_phase6_pipeline_burn`.
+- Admin lookups include `audit_actions` containing `week_approve` and
+  `award_create`; employee `/lookups` does not include `audit_actions`.
+- Admin `POST /people` then `POST /people/{id}/rates` still creates a
+  login and a dated base rate (the UI uses those endpoints).
+- Admin `POST /awards` still creates an award from the wizard payload
+  (cents, template, budget lines). `PATCH /awards/{id}`,
+  `POST /awards/{id}/mods`, and `POST /awards/{id}/rate-policies` still
+  work. Employees 403 on those writes.
+- D18 award-card keys unchanged. `/me/week` still has no dollars.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–7.
+
+---
+
+## Phase 9 — Admin logins, award facts, CLINs, unused delete
+
+Admins manage role/active/password on People, expand award header and
+CLINs, and delete only unused awards (D38–D39). No new tables. Do not
+add email reset or GL.
+
+**Tasks**
+
+- Record D38–D39. Do not change `db/schema.sql` or Alembic head
+  (`0007_phase6_pipeline_burn`).
+- Admin `PATCH /people/{id}`: `role_code`, `is_active`. Existing login
+  required. Last active admin cannot be demoted or deactivated (409).
+- Admin `POST /people/{id}/password`: `{new_password}`. Stamps
+  `password_changed_at` (D20). Never audit the password.
+- `GET /people` includes `is_active` (null when there is no login).
+- `/people` UI: save role/active; reset password.
+- Admin `PATCH /awards/{id}` also `short_code`, `instrument_code`,
+  `mechanism_code`, `phase_code`, and `type_code` only when unused
+  (no charge, no commitment). Type restamps the rules profile.
+- Admin CLIN routes on `/awards/{id}/clins`. Exercise sets
+  `exercised_at`. Delete unexercised only.
+- Admin `DELETE /awards/{id}` when unused (no charge, commitment,
+  timesheet line on the award, or instrument share). Else 409. Used
+  awards close via header status.
+- AwardOut may include `can_delete` and `type_locked`. D18 unchanged.
+- Lookups `audit_actions` include the new action names.
+
+**Acceptance criteria**
+
+- No new tables; Alembic head remains `0007_phase6_pipeline_burn`.
+- Two admins: demoting one succeeds; demoting the last active admin is
+  409. Reset password rejects the old token; employee 403 on PATCH
+  people and password reset.
+- Unused award DELETE is 204; an award with a posted charge is 409.
+  Closing via PATCH still works. Employee 403 on DELETE.
+- CLIN create + exercise removes those cents from
+  `unexercised_option_cents`. D18 keys unchanged.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–8.
+
+---
+
+## Phase 10 — Operations: staffing, home, loops, overrun, search
+
+Turn registers into Monday decisions (D40–D44). Small schema:
+`overrun_policy`, `commitment.expected_date`, `compliance_item.document_id`,
+`funding_expectation`. No GL, payroll, or email.
+
+**Tasks**
+
+- Record D40–D44. Alembic head `0008_phase10_operations`.
+- Stamp `overrun_policy` from award type; PATCH on the award header.
+- Admin `GET /home?as_of=`: missing weeks, approvals, compliance due
+  14 days, aging open commitments, close checklist, portfolio rows with
+  remaining / runway / alerts / next due.
+- Admin `GET /staffing?week_start=&weeks=`: capacity vs assigned vs
+  logged, plan dollars vs remaining personnel/funded, hours by task,
+  utilization by time_code. `POST /staffing/scenario` does not persist.
+- Admin `GET /search?q=`.
+- `commitment.expected_date`; PATCH commitment; aging uses expected or
+  effective date.
+- `funding_expectation` CRUD on the award (not remaining).
+- `compliance_item.document_id` on the same award.
+- CLIN exercise still prompts for a mod in the UI (no auto-mod).
+- Approve returns `warnings`. 409 on funded remaining only when
+  `enforce_ceiling` / `stop`. Employee submit unchanged. `/me/week`
+  planned vs logged hours, no dollars.
+- UI: `/home`, `/staffing`, portfolio table, header search, award
+  loops, approvals warnings, My week planned hours.
+- Lookups `audit_actions` include new action names.
+
+**Acceptance criteria**
+
+- Alembic head is `0008_phase10_operations`. `funding_expectation` is a
+  table; remaining views still exclude pipeline, options, and
+  expectations.
+- Home lists a person with an active login and no submitted/approved
+  week as missing. Employee 403 on `/home`, `/staffing`, `/search`.
+- Two awards assigned over capacity: staffing marks overload. Scenario
+  returns loaded cents without inserting an assignment.
+- CPFF approve that would exceed funded remaining is still 409. FFP
+  (`warn`) approve succeeds with a warning. Assignment-exceed is a
+  warning, never 409.
+- Funding expectation cents do not change `remaining_funded_cents`.
+  Linking a document to compliance does not mark it done.
+- Search finds an award short code. D18 keys unchanged. `/me/week`
+  has no dollar fields.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–9.
+
+---
+
+## Phase 11 — Undo unused rows; end dated ones
+
+Mistakes are removable. History that already priced or posted money is
+not rewritten (D45, D5). No new tables. Alembic head stays
+`0008_phase10_operations`.
+
+**Tasks**
+
+- Record D45. Lookups `audit_actions` include the new names.
+- Assignments: `PATCH /assignments/{id}` (`effective_to`, `hours_per_week`);
+  `DELETE /assignments/{id}` (always; reopen predecessor for the same
+  person+award+task). UI End + Delete on `/people` and `/awards/:id`.
+- Rates: `DELETE /people/{id}/rates/{rate_id}` 204 if no charge snapshots
+  the row; reopen previous. Else 409.
+- Capacity: list history; `DELETE /people/{id}/capacity/{id}` always;
+  reopen previous.
+- People: `PATCH` facts (`display_name`, `email`, `hire_date`,
+  `term_date`, `labor_category`). `DELETE /people/{id}` when unused (no
+  timesheet, charge, or audit-as-actor); last admin 409.
+- Unused task with no timesheet line and no assignment: `DELETE`.
+  Close remains for used tasks.
+- Unused rate-policy revision: `DELETE` if no charge used `policy_id`;
+  reopen previous. Award mods are not deleted.
+- Documents: `DELETE` if no compliance row points at them; remove file.
+- Open compliance: `DELETE` (do not require waive).
+- Unposted instrument: `DELETE` (remove open share commitments). Posted
+  share 409.
+- Open or cancelled purchase/travel: `DELETE /commitments/{id}` (remove
+  the row). Posted 409. Instrument shares 409 (delete the instrument).
+- People/Award UI: Delete on each roster, rate, capacity, assignment,
+  task, and commitment row. Show the button even when delete will 409.
+- Employees 403. D18 unchanged.
+
+**Acceptance criteria**
+
+- Alembic head remains `0008_phase10_operations`. No new tables.
+- Delete a mistaken assignment: 204; staffing/prefill omit it; a previous
+  assignment on that award reopens if this row had closed it.
+- Unused base rate delete: 204; previous rate is open; a rate that priced
+  an approved week is 409.
+- Capacity typo delete updates `/capacity` for that week.
+- PATCH display name; unused person DELETE is 204; person with an
+  approved week is 409. Last admin DELETE is 409.
+- Unused task DELETE 204; task with a timesheet line is 409.
+- Unused policy revision DELETE 204; policy on a posted charge is 409.
+- Document with a compliance link is 409; unlinked document DELETE 204.
+  Open compliance DELETE 204.
+- Unposted instrument DELETE 204; remaining does not keep those
+  commitments. Open purchase DELETE 204; remaining drops; posted
+  purchase 409. Employee 403 on the new routes.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–10.
+
+---
+
+## Phase 12 — Common language, contract schedule, Gantt
+
+Operators can find Ledger words, confirm a starter schedule from a
+contract, and print a Gantt of that schedule (D46–D48). Not remaining
+money. Alembic `0009_phase12_schedule_gantt`.
+
+**Tasks**
+
+- Record D46–D48. Seed `glossary_term` / `glossary_alias`. Lookups
+  include `schedule_kinds`.
+- `GET /glossary`. Search matches aliases. UI `/help`.
+- `schedule_item` CRUD. `POST .../schedule/propose` (draft only) and
+  `.../confirm`. Template from PoP/phase; extract dated lines from
+  pasted text or a `.txt`, `.csv`, `.docx`, or text-based `.pdf`
+  document file. Resolve DD Form 1423 DAC/EOC and recurring schedule
+  rules against the contract Section F PoP. Scanned PDF and legacy
+  `.doc` content requires paste. Infer contiguous start windows for
+  recurring CDRLs; undated starts remain point deliverables rather than
+  falling back to the award PoP.
+- `GET /gantt` and `GET /awards/{id}/gantt`: completed / remaining /
+  behind. UI `/gantt` plus award page. Printable.
+- Remaining views unchanged. Employees 403 on schedule/Gantt writes and
+  Gantt GETs. D18 unchanged.
+
+**Acceptance criteria**
+
+- Alembic head is `0009_phase12_schedule_gantt`.
+- Search “what’s left” hits remaining (glossary). `GET /glossary` works
+  for an employee.
+- Propose does not insert rows. Confirm inserts; remaining cents
+  unchanged. Extract from `.txt` and `.docx` contract files includes a
+  dated deliverable line; text-layer PDF parsing is covered. CDRL
+  extraction resolves 30/180 DAC, EOC, monthly, quarterly, and
+  PoP-relative final-report dates without using clause effective dates.
+  Recurring start dates chain from the contract PoP and prior due date.
+- Open item with `due_date` yesterday is `behind`; `done` is
+  `completed`. Employee 403 on `/gantt`.
+- `python tasks.py lint` and `python tasks.py test` stay green, including
+  Phase 0–11.
+
+---
+
+## Phase 13 — Editable schedule and SOW work-progress Gantt
+
+Operators can correct confirmed contract-schedule rows in place and
+maintain a separate percent-complete plan for technical SOW requirements
+(D49). Alembic `0010_phase13_work_plan`.
+
+**Tasks**
+
+- Add inline edit for confirmed `schedule_item` title, kind, start, and due.
+- Add `work_plan_item` with requirement code, title, start/due, ordering,
+  notes, source document, and `percent_complete_bp`.
+- Propose top-level numbered SOW requirements from the existing contract
+  document/pasted-text intake. Evenly inferred dates are editable before
+  confirmation.
+- Add work-plan CRUD and separate award/portfolio work-Gantt APIs.
+- Add award work-plan editor and printable `/work-gantt` with progress fill.
+
+**Acceptance criteria**
+
+- Alembic head is `0010_phase13_work_plan`; schema and ORM match.
+- Proposed SOW 4.1/4.2/4.3 rows are draft-only until confirmed.
+- Confirmed schedule and work-plan rows edit without delete/re-add.
+- `percent_complete_bp` validates 0–10000 and appears as Gantt fill.
+- A past-due row under 100% is behind; 100% is completed.
+- Employees receive 403 from work-plan and work-Gantt APIs.
+- `python tasks.py lint`, `python tasks.py test`, and UI build stay green.
+
+---
+
+## Later work (not a numbered phase)
+
+Out of v1 items stay in D13 (payroll, GL, SSO, …). Do not grow Ledger into
+QuickBooks.
+
+UI map:
 
 - `/login` — Phase 2.5
-- `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3)
-- `/portfolio` — award cards (Phase 2.5 optional)
-- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4)
-- `/approvals` — submitted time (Phase 2.5)
-- `/people` — capacity and assignments (Phase 3)
-- `/instruments` — shared costs and splits (Phase 4)
-- `/admin` — users, categories, templates
+- `/home` — admin operations board (Phase 10)
+- `/me/week` — employee home (Phase 2.5; task + prefill in Phase 3; planned vs logged in Phase 10)
+- `/me/password` — change password (Phase 2.5 / D20)
+- `/portfolio` — award cards (Phase 2.5 optional); alert flags (Phase 6); new-award link (Phase 8); table + as-of (Phase 10)
+- `/staffing` — forward staffing, utilization, scenario (Phase 10)
+- `/awards/new` — admin award wizard (Phase 8)
+- `/awards/:id` — remaining; tasks + assignments (Phase 3); purchases/travel (Phase 4); documents + compliance (Phase 5); pipeline + burn (Phase 6); header / mod / rate policy (Phase 8); CLINs / unused delete (Phase 9); funding expectations / expected invoice / compliance document / overrun (Phase 10); End/Delete on assignment/task/policy/document/open compliance/open purchase rows (Phase 11); contract schedule propose/confirm + Gantt (Phase 12)
+- `/approvals` — submitted time (Phase 2.5); warnings (Phase 10)
+- `/people` — capacity and assignments (Phase 3); person + login + base rate (Phase 8); role / active / reset password (Phase 9); facts PATCH; Delete on roster, rate, capacity, and assignment rows (Phase 11)
+- `/instruments` — shared costs and splits (Phase 4); unused unposted delete (Phase 11)
+- `/compliance` — due dates across awards (Phase 5); delete open item (Phase 11)
+- `/help` — glossary / common language (Phase 12)
+- `/gantt` — schedule bars: completed, remaining, behind (Phase 12)
+- `/alerts` — 75% and PoP warnings (Phase 6)
+- `/audit` — event log and charges CSV (Phase 7); dropdown filters (Phase 8)

@@ -25,7 +25,7 @@ class Task(Base):
 
 
 class Assignment(Base):
-    """Dated planned hours/week. Prefills drafts; does not post (D23)."""
+    """Dated planned hours/month. Informational; does not post (D23)."""
 
     __tablename__ = "assignment"
 
@@ -33,7 +33,10 @@ class Assignment(Base):
     person_id: Mapped[int] = mapped_column(Integer, ForeignKey("person.person_id"), nullable=False)
     award_id: Mapped[int] = mapped_column(Integer, ForeignKey("award.award_id"), nullable=False)
     task_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("task.task_id"))
-    hours_hundredths_per_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Retained during the monthly migration so older databases and API clients
+    # can be upgraded without rebuilding the assignment table.
+    hours_hundredths_per_week: Mapped[int | None] = mapped_column(Integer)
+    hours_hundredths_per_month: Mapped[int] = mapped_column(Integer, nullable=False)
     effective_from: Mapped[str] = mapped_column(Text, nullable=False)
     effective_to: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, server_default=now_default())

@@ -32,12 +32,13 @@ class TaskCardOut(BaseModel):
 
 
 class AssignmentCreate(BaseModel):
-    """Planned hours/week for a person on an award (optional task)."""
+    """Planned hours/month for a person on an award (optional task)."""
 
     person_id: int
     award_id: int
     task_id: int | None = None
-    hours_per_week: float = Field(gt=0)
+    hours_per_month: float | None = Field(default=None, gt=0)
+    hours_per_week: float | None = Field(default=None, gt=0, deprecated=True)
     effective_from: str
     effective_to: str | None = None
 
@@ -49,9 +50,18 @@ class AssignmentOut(BaseModel):
     person_id: int
     award_id: int
     task_id: int | None
-    hours_per_week: float
+    hours_per_month: float
+    hours_per_week: float | None = Field(default=None, deprecated=True)
     effective_from: str
     effective_to: str | None
+
+
+class AssignmentUpdate(BaseModel):
+    """End or revise planned hours. Does not post (D7, D45)."""
+
+    hours_per_month: float | None = Field(default=None, gt=0)
+    hours_per_week: float | None = Field(default=None, gt=0, deprecated=True)
+    effective_to: str | None = None
 
 
 class CapacityIn(BaseModel):

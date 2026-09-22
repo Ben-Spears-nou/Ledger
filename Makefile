@@ -8,7 +8,7 @@
 
 PYTHON ?= python
 
-.PHONY: install lint format test run db-init backup
+.PHONY: install lint format test build-ui pack run db-init backup
 
 install:
 	$(PYTHON) tasks.py install
@@ -21,6 +21,12 @@ format:
 
 test:
 	$(PYTHON) tasks.py test
+
+build-ui:
+	$(PYTHON) tasks.py build-ui
+
+pack:
+	$(PYTHON) tasks.py pack
 
 run:
 	$(PYTHON) tasks.py run

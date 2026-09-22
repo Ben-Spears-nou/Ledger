@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Task runner for Ledger: ``install``, ``lint``, ``test``, ``run``, ``db-init``, ``backup``.
+"""Task runner for Ledger: ``install``, ``lint``, ``test``, ``build-ui``, ``pack``, ``run``, ``db-init``, ``backup``.
 
 Stdlib-only so it works before dependencies are installed, and on Windows where
 ``make`` is typically unavailable. The ``Makefile`` delegates here, so
@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
+import shutil
+import socket
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -25,10 +28,10 @@ API_HOST = "127.0.0.1"
 API_PORT = "8000"
 
 
-def _run(command: Sequence[str]) -> int:
-    """Run a command in the project root, echoing it first."""
+def _run(command: Sequence[str], *, cwd: Path | None = None) -> int:
+    """Run a command, echoing it first."""
     print(f"$ {' '.join(command)}", flush=True)
-    return subprocess.call(list(command), cwd=PROJECT_ROOT)
+    return subprocess.call(list(command), cwd=str(cwd or PROJECT_ROOT))
 
 
 def _run_all(commands: Sequence[Sequence[str]]) -> int:
@@ -109,23 +112,142 @@ def task_test() -> int:
     return _run(_python("-m", "pytest"))
 
 
+def _guess_lan_ipv4() -> str | None:
+    """Best-effort LAN address for the share URL printed at startup."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("8.8.8.8", 80))
+        return probe.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        probe.close()
+
+
+def task_build_ui() -> int:
+    """Build the React app into ``web/dist`` for FastAPI to serve (D28)."""
+    web = PROJECT_ROOT / "web"
+    npm = shutil.which("npm.cmd") if os.name == "nt" else shutil.which("npm")
+    if npm is None:
+        npm = shutil.which("npm")
+    if npm is None:
+        print("npm is not on PATH. Install Node.js to build the UI.", file=sys.stderr)
+        return 1
+    if not (web / "package.json").is_file():
+        print("web/package.json is missing.", file=sys.stderr)
+        return 1
+    return _run([npm, "run", "build"], cwd=web)
+
+
+PACK_ROOT_FILES = (
+    "pyproject.toml",
+    "tasks.py",
+    "alembic.ini",
+    ".env.example",
+)
+PACK_ROOT_DIRS = ("src", "db", "alembic")
+PACK_OUTPUT_NAME = "ledger-team"
+
+
+def pack_output_dir(root: Path | None = None) -> Path:
+    """Folder written by ``python tasks.py pack`` (gitignored under ``dist/``)."""
+    return (root or PROJECT_ROOT) / "dist" / PACK_OUTPUT_NAME
+
+
+def copy_team_bundle(dest: Path, *, root: Path | None = None) -> Path:
+    """Copy a runnable team-lead tree into ``dest``. Requires ``web/dist``."""
+    source = root or PROJECT_ROOT
+    web_index = source / "web" / "dist" / "index.html"
+    if not web_index.is_file():
+        raise FileNotFoundError("web/dist is missing. Run python tasks.py build-ui, then pack.")
+    dest = dest.resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in PACK_ROOT_FILES:
+        src = source / name
+        if not src.is_file():
+            raise FileNotFoundError(f"missing {src}")
+        shutil.copy2(src, dest / name)
+    for name in PACK_ROOT_DIRS:
+        src = source / name
+        if not src.is_dir():
+            raise FileNotFoundError(f"missing {src}")
+        target = dest / name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(
+            src,
+            target,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+    web_dest = dest / "web" / "dist"
+    if web_dest.exists():
+        shutil.rmtree(web_dest)
+    shutil.copytree(source / "web" / "dist", web_dest)
+    shutil.copy2(source / "pack" / "start-ledger.bat", dest / "start-ledger.bat")
+    shutil.copy2(source / "pack" / "start-ledger.sh", dest / "start-ledger.sh")
+    shutil.copy2(source / "pack" / "prepare_instance.py", dest / "prepare_instance.py")
+    shutil.copy2(source / "pack" / "TEAM.md", dest / "README.md")
+    return dest
+
+
+def task_pack() -> int:
+    """Assemble ``dist/ledger-team`` for another team lead (D8/D28)."""
+    dest = pack_output_dir()
+    try:
+        copy_team_bundle(dest)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"pack: {dest}", flush=True)
+    print("Zip that folder and give it to one team lead. Do not merge databases.")
+    return 0
+
+
 def task_run() -> int:
     """Serve the FastAPI application with uvicorn."""
     if not _is_installed("ledger.api.main"):
         print("The API application is missing (src/ledger/api/main.py).", file=sys.stderr)
         return 1
-    return _run(
-        _python(
+    from ledger.api.spa import DEFAULT_WEB_DIST
+    from ledger.config import (
+        get_settings,
+        is_loopback_host,
+        lan_bind_blocked_by_default_secret,
+    )
+
+    settings = get_settings()
+    host = settings.api_host or API_HOST
+    port = str(settings.api_port or API_PORT)
+    if lan_bind_blocked_by_default_secret(host, settings.secret_key):
+        print(
+            "Refusing to bind beyond loopback while LEDGER_SECRET_KEY is the shipped default.",
+            file=sys.stderr,
+        )
+        print("Set LEDGER_SECRET_KEY in .env, then retry.", file=sys.stderr)
+        return 1
+    if not (DEFAULT_WEB_DIST / "index.html").is_file():
+        print(
+            "warning: web/dist is missing. Run python tasks.py build-ui "
+            "(or use Vite on :5173). /docs still works.",
+            file=sys.stderr,
+        )
+    if not is_loopback_host(host):
+        lan = _guess_lan_ipv4()
+        share = f"http://{lan}:{port}" if lan else f"http://<this-computer>:{port}"
+        print(f"LAN bind {host}:{port}. Teammates open {share}", flush=True)
+    command = _python("-m", "uvicorn", "ledger.api.main:app", "--host", host, "--port", port)
+    if is_loopback_host(host):
+        command = _python(
             "-m",
             "uvicorn",
             "ledger.api.main:app",
             "--reload",
             "--host",
-            API_HOST,
+            host,
             "--port",
-            API_PORT,
+            port,
         )
-    )
+    return _run(command)
 
 
 def task_db_init() -> int:
@@ -160,9 +282,11 @@ TASKS = {
     "lint": task_lint,
     "format": task_format,
     "test": task_test,
+    "build-ui": task_build_ui,
     "run": task_run,
     "db-init": task_db_init,
     "backup": task_backup,
+    "pack": task_pack,
 }
 
 

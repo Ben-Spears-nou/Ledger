@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 from tasks import TASKS
 
 import ledger
 from ledger.api.main import app
 from ledger.config import PROJECT_ROOT, Settings, get_settings
-from ledger.db.bootstrap import init_database
+from ledger.db.bootstrap import ensure_monthly_assignment_schema, init_database
 
 
 @pytest.fixture
@@ -56,6 +57,21 @@ def test_settings_defaults(without_ledger_env: None) -> None:
     assert settings.log_level == "INFO"
 
 
+def test_loopback_and_lan_secret_guard() -> None:
+    from ledger.config import (
+        DEFAULT_SECRET_KEY,
+        is_loopback_host,
+        lan_bind_blocked_by_default_secret,
+    )
+
+    assert is_loopback_host("127.0.0.1")
+    assert is_loopback_host("localhost")
+    assert not is_loopback_host("0.0.0.0")
+    assert lan_bind_blocked_by_default_secret("0.0.0.0", DEFAULT_SECRET_KEY)
+    assert not lan_bind_blocked_by_default_secret("0.0.0.0", "not-the-default")
+    assert not lan_bind_blocked_by_default_secret("127.0.0.1", DEFAULT_SECRET_KEY)
+
+
 def test_settings_read_ledger_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LEDGER_API_PORT", "9001")
     monkeypatch.setenv("LEDGER_LOG_LEVEL", "DEBUG")
@@ -81,7 +97,17 @@ def test_health_endpoint() -> None:
 
 
 def test_task_names_match_the_build_plan() -> None:
-    assert set(TASKS) == {"install", "lint", "format", "test", "run", "db-init", "backup"}
+    assert set(TASKS) == {
+        "install",
+        "lint",
+        "format",
+        "test",
+        "build-ui",
+        "run",
+        "db-init",
+        "backup",
+        "pack",
+    }
 
 
 def test_bootstrap_applies_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -98,3 +124,22 @@ def test_bootstrap_applies_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert path.stat().st_size > 0
     get_settings.cache_clear()
     get_engine.cache_clear()
+
+
+def test_bootstrap_converts_legacy_weekly_assignments_to_monthly(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{(tmp_path / 'legacy.db').as_posix()}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE assignment ("
+            "assignment_id INTEGER PRIMARY KEY, "
+            "hours_hundredths_per_week INTEGER NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO assignment (hours_hundredths_per_week) VALUES (600)"
+        )
+        ensure_monthly_assignment_schema(connection)
+        row = connection.exec_driver_sql(
+            "SELECT hours_hundredths_per_week, hours_hundredths_per_month "
+            "FROM assignment"
+        ).one()
+    assert tuple(row) == (600, 2600)

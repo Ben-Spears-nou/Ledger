@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ledger.models import (
@@ -23,7 +23,7 @@ from ledger.models import (
 )
 from ledger.rates import loaded_rate_cents
 from ledger.services.audit import record_event
-from ledger.services.awards import remaining_for
+from ledger.services.awards import line_remaining_map, remaining_for
 
 
 class TimeError(ValueError):
@@ -97,6 +97,23 @@ def _override_for(
             AwardRateOverride.labor_category == person.labor_category,
         )
     )
+
+
+def as_of_rate(session: Session, person_id: int, work_date: str) -> PersonRate | None:
+    """Person base-rate row in effect on ``work_date``."""
+    return _as_of_rate(session, person_id, work_date)
+
+
+def as_of_policy(session: Session, award_id: int, work_date: str) -> AwardRatePolicy | None:
+    """Award rate policy in effect on ``work_date``."""
+    return _as_of_policy(session, award_id, work_date)
+
+
+def override_for(
+    session: Session, policy: AwardRatePolicy, person: Person
+) -> AwardRateOverride | None:
+    """Person or labor-category loaded-rate override, if any."""
+    return _override_for(session, policy, person)
 
 
 @dataclass(frozen=True)
@@ -215,6 +232,40 @@ def add_person_rate(
     return row
 
 
+def delete_person_rate(session: Session, row: PersonRate, *, actor_id: int | None) -> None:
+    """Remove an unused base-rate row and reopen the predecessor (D45)."""
+    used = session.scalar(
+        select(Charge.charge_id).where(Charge.person_rate_id == row.person_rate_id).limit(1)
+    )
+    if used is not None:
+        raise TimeError("cannot delete a rate that priced a posted charge")
+    from ledger.services.schedule import reopen_dated_predecessor
+
+    siblings = list(
+        session.scalars(
+            select(PersonRate)
+            .where(
+                PersonRate.person_id == row.person_id,
+                PersonRate.person_rate_id != row.person_rate_id,
+            )
+            .order_by(PersonRate.effective_from)
+        )
+    )
+    rate_id = row.person_rate_id
+    person_id = row.person_id
+    reopen_dated_predecessor(siblings, row)
+    session.delete(row)
+    session.flush()
+    record_event(
+        session,
+        action="person_rate_delete",
+        entity_type="person_rate",
+        entity_id=rate_id,
+        actor_user_id=actor_id,
+        detail={"person_id": person_id},
+    )
+
+
 def _time_code_row(session: Session, code: str) -> TimeCode:
     row = session.get(TimeCode, code)
     if row is None:
@@ -300,9 +351,21 @@ def replace_week_lines(
     session: Session,
     period: TimesheetPeriod,
     lines: list[dict[str, object]],
+    *,
+    actor_id: int | None = None,
+    allow_submitted: bool = False,
 ) -> TimesheetPeriod:
-    """Replace all lines on a draft/returned week. No hour-total rules (D10)."""
-    if period.status_code not in {"draft", "returned"}:
+    """Replace all lines on a draft/returned week. No hour-total rules (D10).
+
+    Admins entering hours for someone else may also replace a submitted week;
+    approved weeks still require unapprove first.
+    """
+    allowed = {"draft", "returned"}
+    if allow_submitted:
+        allowed.add("submitted")
+    if period.status_code == "approved":
+        raise TimeError("approved weeks must be unapproved before editing")
+    if period.status_code not in allowed:
         raise TimeError("only draft or returned weeks can be edited")
     existing = session.scalars(
         select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
@@ -327,8 +390,22 @@ def replace_week_lines(
                 task_id=task_id,
             )
         )
-    period.return_comment = None
     session.flush()
+    actor = session.get(UserAccount, actor_id) if actor_id is not None else None
+    if actor is not None and actor.person_id != period.person_id:
+        record_event(
+            session,
+            action="week_update",
+            entity_type="timesheet_period",
+            entity_id=period.timesheet_period_id,
+            actor_user_id=actor_id,
+            detail={
+                "person_id": period.person_id,
+                "week_start": period.week_start,
+                "proxy": True,
+                "status_code": period.status_code,
+            },
+        )
     return period
 
 
@@ -378,13 +455,105 @@ def return_period(
 
 
 def _existing_labor_charge(session: Session, line_id: int) -> Charge | None:
-    return session.scalar(
+    """Open labor posting for a timesheet line (not yet reversed)."""
+    labor = session.scalar(
         select(Charge).where(
             Charge.timesheet_line_id == line_id,
             Charge.source == "labor",
             Charge.reverses_charge_id.is_(None),
         )
     )
+    if labor is None:
+        return None
+    reversed_already = session.scalar(
+        select(Charge.charge_id).where(Charge.reverses_charge_id == labor.charge_id)
+    )
+    if reversed_already is not None:
+        return None
+    return labor
+
+
+def approve_warnings(session: Session, period: TimesheetPeriod) -> list[str]:
+    """Informational approve messages (D43). Never used on employee submit."""
+    from ledger.services.schedule import assigned_hundredths_for_month
+
+    person = session.get(Person, period.person_id)
+    if person is None:
+        return []
+    lines = session.scalars(
+        select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
+    ).all()
+    month_keys: set[tuple[int, str]] = set()
+    extras: dict[int, int] = {}
+    for line in lines:
+        code = _time_code_row(session, line.time_code)
+        if not code.consumes_award or line.award_id is None:
+            continue
+        month_keys.add((line.award_id, line.work_date[:7] + "-01"))
+        try:
+            preview = preview_labor_line(session, person, line)
+        except TimeError:
+            continue
+        extras[line.award_id] = extras.get(line.award_id, 0) + preview.amount_cents
+    warnings: list[str] = []
+    for award_id, month_start in sorted(month_keys):
+        award = session.get(Award, award_id)
+        if award is None:
+            continue
+        next_month = (
+            date.fromisoformat(month_start).replace(day=28) + timedelta(days=4)
+        ).replace(day=1)
+        logged = int(
+            session.scalar(
+                select(func.coalesce(func.sum(TimesheetLine.hours_hundredths), 0))
+                .join(
+                    TimesheetPeriod,
+                    TimesheetPeriod.timesheet_period_id
+                    == TimesheetLine.timesheet_period_id,
+                )
+                .where(
+                    TimesheetPeriod.person_id == period.person_id,
+                    TimesheetLine.award_id == award_id,
+                    TimesheetLine.work_date >= month_start,
+                    TimesheetLine.work_date < next_month.isoformat(),
+                )
+            )
+            or 0
+        )
+        planned = assigned_hundredths_for_month(
+            session, period.person_id, award_id, month_start
+        )
+        if logged > planned + 1:
+            warnings.append(
+                f"{award.short_code}: {month_start[:7]} logged "
+                f"{hundredths_to_hours(logged)}h exceeds monthly assignment "
+                f"{hundredths_to_hours(planned)}h"
+            )
+    for award_id, extra in extras.items():
+        award = session.get(Award, award_id)
+        if award is None:
+            continue
+        remaining = remaining_for(session, award_id)
+        if remaining is None:
+            continue
+        policy = award.overrun_policy or "warn"
+        if policy == "allow":
+            continue
+        if remaining.remaining_funded_cents - extra < 0:
+            warnings.append(
+                f"{award.short_code}: this week would exceed funded remaining "
+                f"({remaining.remaining_funded_cents} cents)"
+            )
+        dated_policy = _as_of_policy(session, award.award_id, period.week_start)
+        if dated_policy is not None and dated_policy.labor_budget_line_id is not None:
+            money = line_remaining_map(session, award.award_id)
+            personnel = money.get(dated_policy.labor_budget_line_id, (0, 0, 0))[2]
+            if personnel - extra < 0:
+                warnings.append(
+                    f"{award.short_code}: this week would exceed remaining personnel "
+                    f"({personnel} cents)"
+                )
+    return warnings
 
 
 def approve_period(
@@ -474,6 +643,13 @@ def approve_period(
 
 def reverse_charge(session: Session, charge: Charge, *, actor_id: int | None) -> Charge:
     """Insert an opposite charge. Does not edit the original (D5)."""
+    if charge.source == "reversal" or charge.reverses_charge_id is not None:
+        raise TimeError("cannot reverse a reversal")
+    existing = session.scalar(
+        select(Charge.charge_id).where(Charge.reverses_charge_id == charge.charge_id)
+    )
+    if existing is not None:
+        raise TimeError("charge already reversed")
     reversal = Charge(
         source="reversal",
         timesheet_line_id=charge.timesheet_line_id,
@@ -502,6 +678,51 @@ def reverse_charge(session: Session, charge: Charge, *, actor_id: int | None) ->
     session.add(reversal)
     session.flush()
     return reversal
+
+
+def unapprove_period(
+    session: Session,
+    period: TimesheetPeriod,
+    comment: str,
+    *,
+    actor_id: int | None,
+) -> TimesheetPeriod:
+    """Reverse posted labor and return the week so hours can be recoded."""
+    if period.status_code != "approved":
+        raise TimeError("only approved weeks can be unapproved")
+    note = comment.strip()
+    if not note:
+        raise TimeError("comment is required")
+    lines = session.scalars(
+        select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
+    ).all()
+    reversed_ids: list[int] = []
+    for line in lines:
+        labor = _existing_labor_charge(session, line.timesheet_line_id)
+        if labor is None:
+            continue
+        reversal = reverse_charge(session, labor, actor_id=actor_id)
+        labor.timesheet_line_id = None
+        reversal.timesheet_line_id = None
+        reversed_ids.append(labor.charge_id)
+    period.status_code = "returned"
+    period.return_comment = note
+    period.approved_at = None
+    period.approved_by = None
+    session.flush()
+    record_event(
+        session,
+        action="week_unapprove",
+        entity_type="timesheet_period",
+        entity_id=period.timesheet_period_id,
+        actor_user_id=actor_id,
+        detail={
+            "person_id": period.person_id,
+            "week_start": period.week_start,
+            "reversed_charge_ids": reversed_ids,
+        },
+    )
+    return period
 
 
 def period_hours_total(session: Session, period: TimesheetPeriod) -> float:

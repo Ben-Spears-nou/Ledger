@@ -1,54 +1,137 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, mondayOnOrBefore, newLineKey, todayIso } from "../api.js";
+import {
+  addDaysIso,
+  api,
+  getUser,
+  mondayOnOrBefore,
+  newLineKey,
+  todayIso,
+} from "../api.js";
 
-function emptyLine(weekStart) {
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function emptyHours() {
+  return ["", "", "", "", "", "", ""];
+}
+
+function emptyRow() {
   return {
     key: newLineKey(),
-    work_date: weekStart,
-    hours: "",
+    time_code: "award",
     award_id: "",
     task_id: "",
-    time_code: "award",
+    hours: emptyHours(),
   };
 }
 
-function lineFromApi(row, weekStart) {
-  return {
-    key: row.timesheet_line_id != null ? `id-${row.timesheet_line_id}` : newLineKey(),
-    work_date: row.work_date || weekStart,
-    hours: row.hours ?? "",
-    award_id: row.award_id ?? "",
-    task_id: row.task_id ?? "",
-    time_code: row.time_code || "award",
-  };
+function dayIndex(workDate, weekStart) {
+  const [y1, m1, d1] = weekStart.split("-").map(Number);
+  const [y2, m2, d2] = workDate.split("-").map(Number);
+  const start = Date.UTC(y1, m1 - 1, d1);
+  const work = Date.UTC(y2, m2 - 1, d2);
+  const index = Math.round((work - start) / 86400000);
+  return index;
+}
+
+function rowIdentity(line) {
+  const timeCode = line.time_code || "award";
+  if (timeCode !== "award") {
+    return `${timeCode}|`;
+  }
+  return `award|${line.award_id ?? ""}|${line.task_id ?? ""}`;
+}
+
+function rowsFromLines(lines, weekStart) {
+  const byKey = new Map();
+  for (const line of lines || []) {
+    const identity = rowIdentity(line);
+    if (!byKey.has(identity)) {
+      byKey.set(identity, {
+        key: newLineKey(),
+        time_code: line.time_code || "award",
+        award_id: line.award_id ?? "",
+        task_id: line.task_id ?? "",
+        hours: emptyHours(),
+      });
+    }
+    const row = byKey.get(identity);
+    const index = dayIndex(line.work_date, weekStart);
+    if (index >= 0 && index < 7) {
+      const previous = Number(row.hours[index]) || 0;
+      const next = previous + Number(line.hours || 0);
+      row.hours[index] = next ? String(next) : "";
+    }
+  }
+  return byKey.size ? Array.from(byKey.values()) : [emptyRow()];
+}
+
+function roundHours(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
 }
 
 export default function MyWeek() {
+  const me = getUser();
+  const isAdmin = me?.role_code === "admin";
+  const myPersonId = me?.person_id != null ? String(me.person_id) : "";
   const [weekStart, setWeekStart] = useState(() => mondayOnOrBefore(todayIso()));
+  const [personId, setPersonId] = useState(myPersonId);
+  const [people, setPeople] = useState([]);
   const [status, setStatus] = useState("draft");
   const [returnComment, setReturnComment] = useState("");
-  const [lines, setLines] = useState(() => [emptyLine(mondayOnOrBefore(todayIso()))]);
+  const [rows, setRows] = useState(() => [emptyRow()]);
   const [awards, setAwards] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [timeCodes, setTimeCodes] = useState([]);
+  const [planned, setPlanned] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const locked = status === "submitted" || status === "approved";
+  const proxy = isAdmin && personId && personId !== myPersonId;
+  const locked = status === "approved" || (!proxy && status === "submitted");
 
-  const hoursTotal = useMemo(
-    () => lines.reduce((sum, line) => sum + (Number(line.hours) || 0), 0),
-    [lines],
+  function weekPath(id) {
+    if (isAdmin && id && id !== myPersonId) {
+      return `/people/${id}/week`;
+    }
+    return "/me/week";
+  }
+
+  const dayDates = useMemo(
+    () => DAY_LABELS.map((label, index) => ({ label, date: addDaysIso(weekStart, index) })),
+    [weekStart],
   );
 
-  async function load(start) {
+  const hoursTotal = useMemo(
+    () =>
+      roundHours(
+        rows.reduce(
+          (sum, row) => sum + row.hours.reduce((rowSum, hours) => rowSum + (Number(hours) || 0), 0),
+          0,
+        ),
+      ),
+    [rows],
+  );
+
+  const dayTotals = useMemo(
+    () =>
+      DAY_LABELS.map((_, index) =>
+        roundHours(rows.reduce((sum, row) => sum + (Number(row.hours[index]) || 0), 0)),
+      ),
+    [rows],
+  );
+
+  async function load(start, forPersonId = personId) {
     setError("");
     const monday = mondayOnOrBefore(start);
-    const [week, picker, lookups, taskList] = await Promise.all([
-      api("/me/week", { query: { week_start: monday } }),
+    const requests = [
+      api(weekPath(forPersonId), { query: { week_start: monday } }),
       api("/awards", { query: { as: "picker" } }),
       api("/lookups"),
       api("/tasks"),
-    ]);
+    ];
+    if (isAdmin) {
+      requests.push(api("/people"));
+    }
+    const [week, picker, lookups, taskList, personList] = await Promise.all(requests);
     setWeekStart(week.week_start);
     setStatus(week.status_code);
     setReturnComment(week.return_comment || "");
@@ -56,59 +139,90 @@ export default function MyWeek() {
     setAwards(openAwards);
     setTasks(taskList || []);
     setTimeCodes(lookups.time_codes || []);
-    const next = (week.lines || []).map((row) => lineFromApi(row, week.week_start));
-    setLines(next.length ? next : [emptyLine(week.week_start)]);
+    setPlanned(week.planned || []);
+    setRows(rowsFromLines(week.lines, week.week_start));
+    if (personList) {
+      setPeople(personList);
+    }
   }
 
   useEffect(() => {
-    load(weekStart).catch((err) => setError(err.message));
-    // weekStart is the controlled picker; load is invoked on change via onWeekChange.
+    load(weekStart, personId).catch((err) => setError(err.message));
+    // weekStart/personId are controlled; load is invoked on change via handlers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function onWeekChange(value) {
     const monday = mondayOnOrBefore(value);
     setWeekStart(monday);
-    load(monday).catch((err) => setError(err.message));
+    load(monday, personId).catch((err) => setError(err.message));
   }
 
-  function updateLine(key, patch) {
-    setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  function onPersonChange(value) {
+    setPersonId(value);
+    load(weekStart, value).catch((err) => setError(err.message));
+  }
+
+  function updateRow(key, patch) {
+    setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  }
+
+  function updateHours(key, index, value) {
+    setRows((current) =>
+      current.map((row) => {
+        if (row.key !== key) {
+          return row;
+        }
+        const hours = row.hours.slice();
+        hours[index] = value;
+        return { ...row, hours };
+      }),
+    );
   }
 
   function payloadLines() {
-    return lines
-      .filter((line) => Number(line.hours) > 0)
-      .map((line) => {
-        const timeCode = line.time_code || "award";
+    const lines = [];
+    for (const row of rows) {
+      const timeCode = row.time_code || "award";
+      row.hours.forEach((value, index) => {
+        const hours = Number(value);
+        if (!(hours > 0)) {
+          return;
+        }
         const body = {
-          work_date: line.work_date,
-          hours: Number(line.hours),
+          work_date: addDaysIso(weekStart, index),
+          hours,
           time_code: timeCode,
         };
         if (timeCode === "award") {
-          body.award_id = line.award_id ? Number(line.award_id) : null;
-          if (line.task_id) {
-            body.task_id = Number(line.task_id);
+          body.award_id = row.award_id ? Number(row.award_id) : null;
+          if (row.task_id) {
+            body.task_id = Number(row.task_id);
           }
         }
-        return body;
+        lines.push(body);
       });
+    }
+    return lines;
   }
 
   async function save() {
     setError("");
     setNotice("");
     try {
-      const week = await api("/me/week", {
+      const week = await api(weekPath(personId), {
         method: "PUT",
         body: { week_start: weekStart, lines: payloadLines() },
       });
       setStatus(week.status_code);
       setReturnComment(week.return_comment || "");
-      const next = (week.lines || []).map((row) => lineFromApi(row, week.week_start));
-      setLines(next.length ? next : [emptyLine(week.week_start)]);
-      setNotice("Saved.");
+      setRows(rowsFromLines(week.lines, week.week_start));
+      setPlanned(week.planned || []);
+      setNotice(
+        week.status_code === "submitted"
+          ? "Saved. The week is still in the approval queue."
+          : "Saved.",
+      );
     } catch (err) {
       setError(err.message);
     }
@@ -118,30 +232,54 @@ export default function MyWeek() {
     setError("");
     setNotice("");
     try {
-      await api("/me/week", {
+      await api(weekPath(personId), {
         method: "PUT",
         body: { week_start: weekStart, lines: payloadLines() },
       });
-      const week = await api("/me/week/submit", {
+      const week = await api(`${weekPath(personId)}/submit`, {
         method: "POST",
         query: { week_start: weekStart },
       });
       setStatus(week.status_code);
+      setRows(rowsFromLines(week.lines, week.week_start));
+      setPlanned(week.planned || []);
       setNotice("Submitted.");
     } catch (err) {
       setError(err.message);
     }
   }
 
+  const codes = timeCodes.length ? timeCodes : [{ time_code: "award", description: "Award" }];
+
   return (
     <>
-      <h1>My week</h1>
+      <h1>{proxy ? "Team hours" : "My week"}</h1>
       <p className="muted">
-        Hours only. A new empty week may prefill from your assignments — edit freely. Running total
-        is informational.
+        Pick each award once, then type hours under the days you worked. Leave other days blank.
+        Running total is informational.
+        {isAdmin
+          ? " As admin you can enter a teammate’s week, including one they already submitted."
+          : ""}
       </p>
       <div className="card">
         <div className="row">
+          {isAdmin ? (
+            <div>
+              <label htmlFor="hours-person">Person</label>
+              <select
+                id="hours-person"
+                value={personId}
+                onChange={(event) => onPersonChange(event.target.value)}
+              >
+                {people.map((person) => (
+                  <option key={person.person_id} value={person.person_id}>
+                    {person.display_name}
+                    {String(person.person_id) === myPersonId ? " (me)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div>
             <label htmlFor="week">Week of (Monday)</label>
             <input
@@ -162,115 +300,197 @@ export default function MyWeek() {
             <div>{hoursTotal}</div>
           </div>
         </div>
-        {returnComment ? <p>Returned: {returnComment}</p> : null}
+        {planned.length ? (
+          <div>
+            <p className="muted">Monthly plan progress (hours only):</p>
+            <ul>
+              {planned.map((row) => {
+                const award = awards.find((item) => item.award_id === row.award_id);
+                return (
+                  <li key={`${row.month_start}-${row.award_id}-${row.task_id || "a"}`}>
+                    {row.month_start.slice(0, 7)} ·{" "}
+                    {award ? award.short_code : `award ${row.award_id}`}: planned{" "}
+                    {row.hours_per_month}h, logged {row.logged_hours}h, remaining{" "}
+                    {row.remaining_hours}h
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
+        {returnComment ? (
+          <p>
+            {status === "returned" ? "Sent back for recoding: " : "Returned: "}
+            {returnComment}
+          </p>
+        ) : null}
       </div>
 
-      {lines.map((line) => (
-        <div className="card" key={line.key}>
-          <div className="row">
-            <div>
-              <label>Date</label>
-              <input
-                type="date"
-                disabled={locked}
-                value={line.work_date}
-                onChange={(event) => updateLine(line.key, { work_date: event.target.value })}
-              />
-            </div>
-            <div>
-              <label>Hours</label>
-              <input
-                type="number"
-                min="0"
-                step="0.25"
-                disabled={locked}
-                value={line.hours}
-                onChange={(event) => updateLine(line.key, { hours: event.target.value })}
-              />
-            </div>
-            <div>
-              <label>Time code</label>
-              <select
-                disabled={locked}
-                value={line.time_code}
-                onChange={(event) => updateLine(line.key, { time_code: event.target.value })}
-              >
-                {(timeCodes.length ? timeCodes : [{ time_code: "award", description: "Award" }]).map(
-                  (code) => (
-                    <option key={code.time_code} value={code.time_code}>
-                      {code.time_code}
-                    </option>
-                  ),
-                )}
-              </select>
-            </div>
-            <div>
-              <label>Award</label>
-              <select
-                disabled={locked || line.time_code !== "award"}
-                value={line.award_id}
-                onChange={(event) =>
-                  updateLine(line.key, { award_id: event.target.value, task_id: "" })
-                }
-              >
-                <option value="">Select award</option>
-                {awards.map((award) => (
-                  <option key={award.award_id} value={award.award_id}>
-                    {award.short_code} — {award.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label>Task</label>
-              <select
-                disabled={locked || line.time_code !== "award" || !line.award_id}
-                value={line.task_id}
-                onChange={(event) => updateLine(line.key, { task_id: event.target.value })}
-              >
-                <option value="">No task</option>
-                {tasks
-                  .filter(
-                    (task) =>
-                      String(task.award_id) === String(line.award_id) &&
-                      (task.status_code === "open" || String(task.task_id) === String(line.task_id)),
-                  )
-                  .map((task) => (
-                    <option key={task.task_id} value={task.task_id}>
-                      {task.short_code} — {task.title}
-                    </option>
+      <div className="card week-grid-wrap">
+        <table className="week-grid">
+          <thead>
+            <tr>
+              <th>Time code</th>
+              <th>Award</th>
+              <th>Task</th>
+              {dayDates.map((day) => (
+                <th key={day.date} className={day.label === "Sat" || day.label === "Sun" ? "weekend" : ""}>
+                  {day.label}
+                  <div className="muted">{day.date.slice(5)}</div>
+                </th>
+              ))}
+              <th>Total</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const rowTotal = roundHours(
+                row.hours.reduce((sum, hours) => sum + (Number(hours) || 0), 0),
+              );
+              const awardTime = row.time_code === "award";
+              return (
+                <tr key={row.key}>
+                  <td>
+                    <select
+                      disabled={locked}
+                      value={row.time_code}
+                      onChange={(event) => {
+                        const timeCode = event.target.value;
+                        updateRow(row.key, {
+                          time_code: timeCode,
+                          award_id: timeCode === "award" ? row.award_id : "",
+                          task_id: timeCode === "award" ? row.task_id : "",
+                        });
+                      }}
+                    >
+                      {codes.map((code) => (
+                        <option key={code.time_code} value={code.time_code}>
+                          {code.time_code}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      disabled={locked || !awardTime}
+                      value={row.award_id}
+                      onChange={(event) =>
+                        updateRow(row.key, { award_id: event.target.value, task_id: "" })
+                      }
+                    >
+                      <option value="">{awardTime ? "Select award" : "—"}</option>
+                      {awards.map((award) => (
+                        <option key={award.award_id} value={award.award_id}>
+                          {award.short_code} — {award.title}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      disabled={locked || !awardTime || !row.award_id}
+                      value={row.task_id}
+                      onChange={(event) => updateRow(row.key, { task_id: event.target.value })}
+                    >
+                      <option value="">No task</option>
+                      {tasks
+                        .filter(
+                          (task) =>
+                            String(task.award_id) === String(row.award_id) &&
+                            (task.status_code === "open" ||
+                              String(task.task_id) === String(row.task_id)),
+                        )
+                        .map((task) => (
+                          <option key={task.task_id} value={task.task_id}>
+                            {task.short_code}
+                          </option>
+                        ))}
+                    </select>
+                  </td>
+                  {row.hours.map((value, index) => (
+                    <td
+                      key={dayDates[index].date}
+                      className={
+                        dayDates[index].label === "Sat" || dayDates[index].label === "Sun"
+                          ? "weekend"
+                          : ""
+                      }
+                    >
+                      <input
+                        className="hours"
+                        type="number"
+                        min="0"
+                        step="0.25"
+                        disabled={locked}
+                        value={value}
+                        onChange={(event) => updateHours(row.key, index, event.target.value)}
+                      />
+                    </td>
                   ))}
-              </select>
-            </div>
-          </div>
-          {!locked ? (
-            <p>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))}
-              >
-                Remove line
-              </button>
-            </p>
-          ) : null}
-        </div>
-      ))}
+                  <td>{rowTotal}</td>
+                  <td>
+                    {!locked ? (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() =>
+                          setRows((current) => {
+                            const next = current.filter((item) => item.key !== row.key);
+                            return next.length ? next : [emptyRow()];
+                          })
+                        }
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th colSpan={3}>Totals</th>
+              {dayTotals.map((total, index) => (
+                <th
+                  key={dayDates[index].date}
+                  className={
+                    dayDates[index].label === "Sat" || dayDates[index].label === "Sun" ? "weekend" : ""
+                  }
+                >
+                  {total}
+                </th>
+              ))}
+              <th>{hoursTotal}</th>
+              <th></th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
 
       {!locked ? (
         <p>
-          <button type="button" className="secondary" onClick={() => setLines((current) => [...current, emptyLine(weekStart)])}>
-            Add line
+          <button type="button" className="secondary" onClick={() => setRows((current) => [...current, emptyRow()])}>
+            Add award
           </button>{" "}
           <button type="button" onClick={save}>
             Save
-          </button>{" "}
-          <button type="button" onClick={submit}>
-            Submit
           </button>
+          {status !== "submitted" ? (
+            <>
+              {" "}
+              <button type="button" onClick={submit}>
+                Submit
+              </button>
+            </>
+          ) : null}
         </p>
       ) : (
-        <p className="muted">This week is {status} and cannot be edited here.</p>
+        <p className="muted">
+          This week is {status} and cannot be edited here
+          {status === "approved" ? " until it is unapproved." : "."}
+        </p>
       )}
       {notice ? <p>{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import calendar
+from collections import Counter
 from datetime import UTC, date, datetime, timedelta
+from shutil import rmtree
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
@@ -10,6 +13,7 @@ from sqlalchemy.orm import Session
 from ledger.db.seed import get_default_organization_id
 from ledger.models import (
     Agency,
+    Assignment,
     Award,
     AwardMod,
     AwardRateOverride,
@@ -18,9 +22,22 @@ from ledger.models import (
     BudgetLine,
     BudgetTemplateLine,
     BudgetVersion,
+    Charge,
     Clin,
+    Commitment,
+    ComplianceItem,
+    Document,
+    FfpBillingPeriod,
+    FundingExpectation,
+    InstrumentShare,
+    PipelineNode,
     RatePolicyTemplate,
+    ScheduleItem,
+    Task,
+    TimesheetLine,
+    WorkPlanItem,
 )
+from ledger.models.lookups import AwardInstrument, AwardMechanism, AwardPhase
 from ledger.schemas.awards import (
     AwardCardOut,
     AwardCreate,
@@ -31,13 +48,18 @@ from ledger.schemas.awards import (
     BudgetLineChange,
     BudgetLineIn,
     BudgetLineOut,
+    ClinExerciseIn,
     ClinIn,
     ClinOut,
+    ClinUpdate,
+    FfpBillingPeriodOut,
+    FfpBillingSubmitIn,
     RateOverrideOut,
     RatePolicyIn,
     RatePolicyOut,
 )
 from ledger.services.audit import record_event
+from ledger.services.pipeline import pipeline_cents_for
 
 
 class AwardError(ValueError):
@@ -46,6 +68,46 @@ class AwardError(ValueError):
 
 def _as_int_flag(value: bool | int) -> int:
     return 1 if value else 0
+
+
+def _ffp_fee_cents(funded_cents: int, fee_pct: int) -> int:
+    """Return funded-price fee rounded to the nearest cent."""
+    return (funded_cents * fee_pct + 5_000) // 10_000
+
+
+def _parse_iso_date(value: str, field: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise AwardError(f"{field} must be an ISO date") from exc
+
+
+def _add_months(value: date, months: int) -> date:
+    """Move from the original PoP anchor without end-of-month drift."""
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _working_months(pop_start: str, pop_end: str) -> list[tuple[str, str]]:
+    """Return evenly anchored contract-month date ranges, clipped at PoP end."""
+    start = _parse_iso_date(pop_start, "pop_start")
+    end = _parse_iso_date(pop_end, "pop_end")
+    if end < start:
+        raise AwardError("pop_end must not be before pop_start")
+    periods: list[tuple[str, str]] = []
+    index = 0
+    while True:
+        period_start = _add_months(start, index)
+        if period_start > end:
+            break
+        next_start = _add_months(start, index + 1)
+        period_end = min(end, next_start - timedelta(days=1))
+        periods.append((period_start.isoformat(), period_end.isoformat()))
+        index += 1
+    return periods
 
 
 def record_agency(session: Session, name: str) -> None:
@@ -100,15 +162,126 @@ def _default_budget_lines(session: Session, type_code: str) -> list[BudgetLineIn
     ).all()
     if not rows:
         raise AwardError(f"no budget template lines for award type {type_code}")
-    return [
-        BudgetLineIn(
-            category_code=row.category_code,
-            label=row.label,
-            approved_cents=0,
-            sort_order=row.sort_order,
+    specs: dict[str, BudgetLineIn] = {}
+    for row in rows:
+        specs.setdefault(
+            row.category_code,
+            BudgetLineIn(
+                category_code=row.category_code,
+                label=row.label,
+                approved_cents=0,
+                sort_order=row.sort_order,
+            ),
         )
-        for row in rows
+    return list(specs.values())
+
+
+def _rebuild_ffp_billing_schedule(session: Session, award: Award, *, actor_id: int | None) -> None:
+    """Keep submitted FFP periods and spread remaining funding across future months."""
+    if award.type_code != "FFP":
+        return
+    rows = list(
+        session.scalars(
+            select(FfpBillingPeriod)
+            .where(FfpBillingPeriod.award_id == award.award_id)
+            .order_by(FfpBillingPeriod.period_number)
+        )
+    )
+    submitted = [row for row in rows if row.submitted_at is not None]
+    for row in rows:
+        if row.submitted_at is None:
+            session.delete(row)
+    session.flush()
+
+    submitted_total = sum(int(row.submitted_cents or 0) for row in submitted)
+    remaining = award.funded_amount_cents - submitted_total
+    if remaining < 0:
+        raise AwardError("funded amount cannot be less than already submitted FFP invoices")
+
+    last_submitted_end = max((row.period_end for row in submitted), default=None)
+    periods = [
+        period
+        for period in _working_months(award.pop_start, award.pop_end)
+        if last_submitted_end is None or period[0] > last_submitted_end
     ]
+    if not periods:
+        if remaining:
+            raise AwardError("extend the PoP before adding funding after the final FFP invoice")
+        return
+
+    base, remainder = divmod(remaining, len(periods))
+    first_number = max((row.period_number for row in submitted), default=0) + 1
+    for offset, (period_start, period_end) in enumerate(periods):
+        session.add(
+            FfpBillingPeriod(
+                award_id=award.award_id,
+                period_number=first_number + offset,
+                period_start=period_start,
+                period_end=period_end,
+                scheduled_cents=base + (remainder if offset == len(periods) - 1 else 0),
+                created_by=actor_id,
+            )
+        )
+    session.flush()
+
+
+def serialize_billing_period(row: FfpBillingPeriod) -> FfpBillingPeriodOut:
+    """FFP billing-period DTO."""
+    return FfpBillingPeriodOut(
+        billing_period_id=row.billing_period_id,
+        period_number=row.period_number,
+        period_start=row.period_start,
+        period_end=row.period_end,
+        scheduled_cents=row.scheduled_cents,
+        submitted_cents=row.submitted_cents,
+        submitted_at=row.submitted_at,
+    )
+
+
+def submit_billing_period(
+    session: Session,
+    award: Award,
+    row: FfpBillingPeriod,
+    payload: FfpBillingSubmitIn,
+    *,
+    actor_id: int | None,
+) -> FfpBillingPeriod:
+    """Mark one FFP monthly invoice submitted."""
+    if award.type_code != "FFP" or row.award_id != award.award_id:
+        raise AwardError("FFP billing period not found")
+    if row.submitted_at is not None:
+        raise AwardError("FFP billing period is already submitted")
+    earlier_pending = session.scalar(
+        select(FfpBillingPeriod.billing_period_id)
+        .where(
+            FfpBillingPeriod.award_id == award.award_id,
+            FfpBillingPeriod.period_number < row.period_number,
+            FfpBillingPeriod.submitted_at.is_(None),
+        )
+        .limit(1)
+    )
+    if earlier_pending is not None:
+        raise AwardError("submit earlier FFP billing periods first")
+    submitted_at = payload.submitted_at or datetime.now(UTC).date().isoformat()
+    _parse_iso_date(submitted_at, "submitted_at")
+    row.submitted_cents = (
+        payload.submitted_cents if payload.submitted_cents is not None else row.scheduled_cents
+    )
+    row.submitted_at = submitted_at
+    session.flush()
+    record_event(
+        session,
+        action="ffp_invoice_submit",
+        entity_type="ffp_billing_period",
+        entity_id=row.billing_period_id,
+        actor_user_id=actor_id,
+        detail={
+            "award_id": award.award_id,
+            "submitted_cents": row.submitted_cents,
+            "submitted_at": row.submitted_at,
+        },
+    )
+    return row
 
 
 def _add_overrides(session: Session, policy: AwardRatePolicy, incoming: RatePolicyIn) -> None:
@@ -155,6 +328,15 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
     award_type = session.get(AwardType, payload.type_code)
     if award_type is None:
         raise AwardError(f"unknown award type: {payload.type_code}")
+    fee_pct = payload.fee_pct
+    fee_pot_cents = payload.fee_pot_cents
+    if payload.type_code == "CPFF":
+        if fee_pct:
+            raise AwardError("CPFF awards use a fixed fee amount, not a fee percentage")
+    elif payload.type_code == "FFP":
+        if fee_pot_cents:
+            raise AwardError("FFP fee is calculated from funded amount and fee percentage")
+        fee_pot_cents = _ffp_fee_cents(payload.funded_amount_cents, fee_pct)
 
     record_agency(session, payload.agency)
     org_id = get_default_organization_id(session)
@@ -174,11 +356,13 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
         funded_through=payload.funded_through,
         awarded_cost_cents=payload.awarded_cost_cents,
         funded_amount_cents=payload.funded_amount_cents,
-        fee_pot_cents=payload.fee_pot_cents,
+        fee_pct=fee_pct,
+        fee_pot_cents=fee_pot_cents,
         enforce_ceiling=award_type.enforce_ceiling,
         labor_incurred=award_type.labor_incurred,
         fee_engine=award_type.fee_engine,
         ceiling_warn_pct=award_type.ceiling_warn_pct,
+        overrun_policy=award_type.overrun_policy,
         created_by=actor_id,
     )
     session.add(award)
@@ -195,25 +379,25 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
     session.flush()
 
     line_specs = payload.budget_lines or _default_budget_lines(session, payload.type_code)
-    if (
-        payload.fee_pot_cents
-        and award_type.fee_engine == "fixed_pot"
-        and not any(spec.category_code == "fee" for spec in line_specs)
-    ):
+    seen_categories = Counter(spec.category_code for spec in line_specs)
+    repeated = sorted(code for code, count in seen_categories.items() if count > 1)
+    if repeated:
+        raise AwardError(f"duplicate budget categories: {', '.join(repeated)}")
+    if fee_pot_cents and not any(spec.category_code == "fee" for spec in line_specs):
         line_specs = [
             *line_specs,
             BudgetLineIn(
                 category_code="fee",
-                label="Fee",
-                approved_cents=payload.fee_pot_cents,
+                label="Fee / profit" if payload.type_code == "FFP" else "Fee",
+                approved_cents=fee_pot_cents,
                 sort_order=90,
             ),
         ]
     created_lines: list[BudgetLine] = []
     for spec in line_specs:
         approved = spec.approved_cents
-        if spec.category_code == "fee" and approved == 0 and payload.fee_pot_cents:
-            approved = payload.fee_pot_cents
+        if spec.category_code == "fee" and fee_pot_cents:
+            approved = fee_pot_cents
         line = BudgetLine(
             budget_version_id=version.budget_version_id,
             category_code=spec.category_code,
@@ -226,6 +410,9 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
     session.flush()
 
     fields = _resolve_policy_fields(session, payload.rate_policy)
+    if payload.type_code in {"CPFF", "FFP"}:
+        fields["fee_pct"] = 0
+        fields["fee_in_burden"] = 0
     effective_from = payload.rate_policy.effective_from or payload.pop_start
     policy = AwardRatePolicy(
         award_id=award.award_id,
@@ -241,6 +428,7 @@ def create_award(session: Session, payload: AwardCreate, *, actor_id: int | None
 
     for clin in payload.clins:
         _add_clin(session, award.award_id, clin)
+    _rebuild_ffp_billing_schedule(session, award, actor_id=actor_id)
 
     session.flush()
     record_event(
@@ -274,6 +462,9 @@ def revise_rate_policy(
 ) -> AwardRatePolicy:
     """Insert a new policy row and close the previous one (D5)."""
     fields = _resolve_policy_fields(session, incoming)
+    if award.type_code in {"CPFF", "FFP"}:
+        fields["fee_pct"] = 0
+        fields["fee_in_burden"] = 0
     effective_from = incoming.effective_from or datetime.now(UTC).date().isoformat()
     _close_open_policies(session, award.award_id, effective_from)
     current = current_policy(session, award.award_id)
@@ -300,6 +491,45 @@ def revise_rate_policy(
     return policy
 
 
+def delete_rate_policy(session: Session, policy: AwardRatePolicy, *, actor_id: int | None) -> None:
+    """Remove an unused policy revision and reopen the predecessor (D45)."""
+    used = session.scalar(
+        select(Charge.charge_id).where(Charge.policy_id == policy.policy_id).limit(1)
+    )
+    if used is not None:
+        raise AwardError("cannot delete a rate policy that priced a posted charge")
+    from ledger.services.schedule import reopen_dated_predecessor
+
+    siblings = list(
+        session.scalars(
+            select(AwardRatePolicy).where(
+                AwardRatePolicy.award_id == policy.award_id,
+                AwardRatePolicy.policy_id != policy.policy_id,
+            )
+        )
+    )
+    for override in session.scalars(
+        select(AwardRateOverride).where(AwardRateOverride.policy_id == policy.policy_id)
+    ):
+        session.delete(override)
+    session.flush()
+    reopen_dated_predecessor(siblings, policy)
+    policy_id = policy.policy_id
+    award_id = policy.award_id
+    policy.labor_budget_line_id = None
+    session.flush()
+    session.delete(policy)
+    session.flush()
+    record_event(
+        session,
+        action="rate_policy_delete",
+        entity_type="award_rate_policy",
+        entity_id=policy_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award_id},
+    )
+
+
 def apply_mod(
     session: Session, award: Award, payload: AwardModCreate, *, actor_id: int | None
 ) -> AwardMod:
@@ -312,6 +542,47 @@ def apply_mod(
     )
     if existing is not None:
         raise AwardError(f"mod {payload.mod_number} already exists on this award")
+    if award.type_code == "CPFF" and payload.fee_pct:
+        raise AwardError("CPFF awards use a fixed fee amount, not a fee percentage")
+    if award.type_code == "FFP" and payload.fee_pot_cents:
+        raise AwardError("FFP fee is calculated from funded amount and fee percentage")
+
+    if payload.awarded_cost_cents is not None:
+        award.awarded_cost_cents = payload.awarded_cost_cents
+    if payload.funded_amount_cents is not None:
+        award.funded_amount_cents = payload.funded_amount_cents
+    if payload.fee_pct is not None:
+        award.fee_pct = payload.fee_pct
+    if payload.pop_start is not None:
+        award.pop_start = payload.pop_start
+    if payload.pop_end is not None:
+        award.pop_end = payload.pop_end
+    if payload.funded_through is not None:
+        award.funded_through = payload.funded_through
+
+    changes = list(payload.budget_line_changes)
+    mod_fee_pot = payload.fee_pot_cents
+    if award.type_code == "FFP":
+        award.fee_pot_cents = _ffp_fee_cents(award.funded_amount_cents, award.fee_pct)
+        mod_fee_pot = award.fee_pot_cents
+        changes = [change for change in changes if change.category_code != "fee"]
+        changes.append(
+            BudgetLineChange(
+                category_code="fee",
+                label="Fee / profit",
+                approved_cents=award.fee_pot_cents,
+            )
+        )
+    elif payload.fee_pot_cents is not None:
+        award.fee_pot_cents = payload.fee_pot_cents
+        changes = [change for change in changes if change.category_code != "fee"]
+        changes.append(
+            BudgetLineChange(
+                category_code="fee",
+                label="Fee",
+                approved_cents=award.fee_pot_cents,
+            )
+        )
 
     mod = AwardMod(
         award_id=award.award_id,
@@ -320,7 +591,8 @@ def apply_mod(
         description=payload.description,
         awarded_cost_cents=payload.awarded_cost_cents,
         funded_amount_cents=payload.funded_amount_cents,
-        fee_pot_cents=payload.fee_pot_cents,
+        fee_pct=payload.fee_pct if award.type_code == "FFP" else None,
+        fee_pot_cents=mod_fee_pot,
         pop_start=payload.pop_start,
         pop_end=payload.pop_end,
         funded_through=payload.funded_through,
@@ -328,31 +600,27 @@ def apply_mod(
     )
     session.add(mod)
 
-    if payload.awarded_cost_cents is not None:
-        award.awarded_cost_cents = payload.awarded_cost_cents
-    if payload.funded_amount_cents is not None:
-        award.funded_amount_cents = payload.funded_amount_cents
-    if payload.fee_pot_cents is not None:
-        award.fee_pot_cents = payload.fee_pot_cents
-    if payload.pop_start is not None:
-        award.pop_start = payload.pop_start
-    if payload.pop_end is not None:
-        award.pop_end = payload.pop_end
-    if payload.funded_through is not None:
-        award.funded_through = payload.funded_through
-
-    if payload.budget_line_changes:
-        _apply_budget_changes(
-            session, award, payload.budget_line_changes, payload.mod_number, actor_id
-        )
+    if changes:
+        _apply_budget_changes(session, award, changes, payload.mod_number, actor_id)
 
     if payload.rate_policy is not None:
         if payload.rate_policy.effective_from is None:
             payload.rate_policy.effective_from = payload.effective_date
         revise_rate_policy(session, award, payload.rate_policy, actor_id=actor_id)
 
+    _rebuild_ffp_billing_schedule(session, award, actor_id=actor_id)
     session.flush()
     return mod
+
+
+def _merge_budget_changes(changes: list[BudgetLineChange]) -> dict[str, BudgetLineChange]:
+    """Require one current approved total per category in a modification."""
+    merged: dict[str, BudgetLineChange] = {}
+    for item in changes:
+        if item.category_code in merged:
+            raise AwardError(f"duplicate budget category in modification: {item.category_code}")
+        merged[item.category_code] = item
+    return merged
 
 
 def _apply_budget_changes(
@@ -380,9 +648,15 @@ def _apply_budget_changes(
         .where(BudgetLine.budget_version_id == current.budget_version_id)
         .order_by(BudgetLine.sort_order)
     ).all()
-    by_category = {item.category_code: item for item in changes}
+    by_category = _merge_budget_changes(changes)
     copied: list[BudgetLine] = []
+    carried: dict[str, BudgetLine] = {}
     for old in old_lines:
+        existing = carried.get(old.category_code)
+        if existing is not None:
+            if old.category_code not in by_category:
+                existing.approved_cents = max(existing.approved_cents, old.approved_cents)
+            continue
         change = by_category.pop(old.category_code, None)
         line = BudgetLine(
             budget_version_id=new_version.budget_version_id,
@@ -393,6 +667,7 @@ def _apply_budget_changes(
         )
         session.add(line)
         copied.append(line)
+        carried[old.category_code] = line
     next_sort = (copied[-1].sort_order + 10) if copied else 10
     for change in by_category.values():
         session.add(
@@ -418,18 +693,347 @@ def _apply_budget_changes(
             policy.labor_budget_line_id = personnel.budget_line_id
 
 
-def update_award(session: Session, award: Award, payload: AwardUpdate) -> Award:
+def update_award(
+    session: Session, award: Award, payload: AwardUpdate, *, actor_id: int | None = None
+) -> Award:
     """Patch header fields that are not a formal modification."""
+    if payload.short_code is not None:
+        code = payload.short_code.strip()
+        if not code:
+            raise AwardError("short_code is required")
+        taken = session.scalar(
+            select(Award).where(
+                Award.organization_id == award.organization_id,
+                Award.short_code == code,
+                Award.award_id != award.award_id,
+            )
+        )
+        if taken is not None:
+            raise AwardError("short_code already exists")
+        award.short_code = code
     if payload.title is not None:
         award.title = payload.title.strip()
     if payload.agency is not None:
         record_agency(session, payload.agency)
         award.agency = payload.agency.strip()
+    if payload.instrument_code is not None:
+        if session.get(AwardInstrument, payload.instrument_code) is None:
+            raise AwardError(f"unknown instrument: {payload.instrument_code}")
+        award.instrument_code = payload.instrument_code
+    if payload.mechanism_code is not None:
+        if session.get(AwardMechanism, payload.mechanism_code) is None:
+            raise AwardError(f"unknown mechanism: {payload.mechanism_code}")
+        award.mechanism_code = payload.mechanism_code
+    if payload.phase_code is not None:
+        if session.get(AwardPhase, payload.phase_code) is None:
+            raise AwardError(f"unknown phase: {payload.phase_code}")
+        award.phase_code = payload.phase_code
+    if payload.type_code is not None and payload.type_code != award.type_code:
+        if type_is_locked(session, award.award_id):
+            raise AwardError("type_code is locked after charges or commitments exist")
+        award_type = session.get(AwardType, payload.type_code)
+        if award_type is None:
+            raise AwardError(f"unknown award type: {payload.type_code}")
+        award.type_code = payload.type_code
+        award.enforce_ceiling = award_type.enforce_ceiling
+        award.labor_incurred = award_type.labor_incurred
+        award.fee_engine = award_type.fee_engine
+        award.ceiling_warn_pct = award_type.ceiling_warn_pct
+        award.overrun_policy = award_type.overrun_policy
     if payload.status_code is not None:
         award.status_code = payload.status_code
     if payload.funded_through is not None:
         award.funded_through = payload.funded_through
+    if payload.overrun_policy is not None:
+        if payload.overrun_policy not in {"stop", "warn", "allow"}:
+            raise AwardError("overrun_policy must be stop, warn, or allow")
+        award.overrun_policy = payload.overrun_policy
+    session.flush()
+    record_event(
+        session,
+        action="award_update",
+        entity_type="award",
+        entity_id=award.award_id,
+        actor_user_id=actor_id,
+        detail={"short_code": award.short_code, "status_code": award.status_code},
+    )
     return award
+
+
+def type_is_locked(session: Session, award_id: int) -> bool:
+    """True when type may not change (any charge or commitment)."""
+    if session.scalar(select(Charge.charge_id).where(Charge.award_id == award_id).limit(1)):
+        return True
+    if session.scalar(
+        select(FfpBillingPeriod.billing_period_id)
+        .where(
+            FfpBillingPeriod.award_id == award_id,
+            FfpBillingPeriod.submitted_at.is_not(None),
+        )
+        .limit(1)
+    ):
+        return True
+    return bool(
+        session.scalar(
+            select(Commitment.commitment_id).where(Commitment.award_id == award_id).limit(1)
+        )
+    )
+
+
+def unused_blockers(session: Session, award_id: int) -> list[str]:
+    """Reasons an award cannot be deleted (D39)."""
+    blockers: list[str] = []
+    if session.scalar(select(Charge.charge_id).where(Charge.award_id == award_id).limit(1)):
+        blockers.append("charge")
+    if session.scalar(
+        select(Commitment.commitment_id).where(Commitment.award_id == award_id).limit(1)
+    ):
+        blockers.append("commitment")
+    if session.scalar(
+        select(TimesheetLine.timesheet_line_id).where(TimesheetLine.award_id == award_id).limit(1)
+    ):
+        blockers.append("timesheet_line")
+    if session.scalar(
+        select(InstrumentShare.instrument_share_id)
+        .where(InstrumentShare.award_id == award_id)
+        .limit(1)
+    ):
+        blockers.append("instrument_share")
+    if session.scalar(
+        select(FfpBillingPeriod.billing_period_id)
+        .where(
+            FfpBillingPeriod.award_id == award_id,
+            FfpBillingPeriod.submitted_at.is_not(None),
+        )
+        .limit(1)
+    ):
+        blockers.append("submitted FFP invoice")
+    task_ids = select(Task.task_id).where(Task.award_id == award_id)
+    if session.scalar(
+        select(TimesheetLine.timesheet_line_id).where(TimesheetLine.task_id.in_(task_ids)).limit(1)
+    ):
+        blockers.append("timesheet_line")
+    return sorted(set(blockers))
+
+
+def can_delete_award(session: Session, award_id: int) -> bool:
+    """True when DELETE is allowed."""
+    return not unused_blockers(session, award_id)
+
+
+def serialize_clin(row: Clin) -> ClinOut:
+    """CLIN DTO."""
+    return ClinOut(
+        clin_id=row.clin_id,
+        clin_number=row.clin_number,
+        description=row.description,
+        amount_cents=row.amount_cents,
+        is_option=bool(row.is_option),
+        exercise_window_start=row.exercise_window_start,
+        exercise_window_end=row.exercise_window_end,
+        exercised_at=row.exercised_at,
+    )
+
+
+def add_clin(session: Session, award: Award, payload: ClinIn, *, actor_id: int | None) -> Clin:
+    """Insert a CLIN on an award."""
+    existing = session.scalar(
+        select(Clin).where(Clin.award_id == award.award_id, Clin.clin_number == payload.clin_number)
+    )
+    if existing is not None:
+        raise AwardError(f"clin {payload.clin_number} already exists on this award")
+    row = _add_clin(session, award.award_id, payload)
+    session.flush()
+    record_event(
+        session,
+        action="clin_create",
+        entity_type="clin",
+        entity_id=row.clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id, "clin_number": row.clin_number},
+    )
+    return row
+
+
+def update_clin(
+    session: Session, award: Award, clin: Clin, payload: ClinUpdate, *, actor_id: int | None
+) -> Clin:
+    """Patch CLIN facts. Does not set exercised_at."""
+    if clin.award_id != award.award_id:
+        raise AwardError("clin not found")
+    if payload.clin_number is not None:
+        taken = session.scalar(
+            select(Clin).where(
+                Clin.award_id == award.award_id,
+                Clin.clin_number == payload.clin_number,
+                Clin.clin_id != clin.clin_id,
+            )
+        )
+        if taken is not None:
+            raise AwardError(f"clin {payload.clin_number} already exists on this award")
+        clin.clin_number = payload.clin_number
+    if payload.description is not None:
+        clin.description = payload.description
+    if payload.amount_cents is not None:
+        clin.amount_cents = payload.amount_cents
+    if payload.is_option is not None:
+        clin.is_option = _as_int_flag(payload.is_option)
+    if payload.exercise_window_start is not None:
+        clin.exercise_window_start = payload.exercise_window_start or None
+    if payload.exercise_window_end is not None:
+        clin.exercise_window_end = payload.exercise_window_end or None
+    session.flush()
+    record_event(
+        session,
+        action="clin_update",
+        entity_type="clin",
+        entity_id=clin.clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id},
+    )
+    return clin
+
+
+def exercise_clin(
+    session: Session,
+    award: Award,
+    clin: Clin,
+    payload: ClinExerciseIn,
+    *,
+    actor_id: int | None,
+) -> Clin:
+    """Set exercised_at. Does not change funded remaining (D39)."""
+    if clin.award_id != award.award_id:
+        raise AwardError("clin not found")
+    if not clin.is_option:
+        raise AwardError("only option CLINs can be exercised")
+    if clin.exercised_at:
+        raise AwardError("clin is already exercised")
+    when = payload.exercised_at or datetime.now(UTC).date().isoformat()
+    try:
+        date.fromisoformat(when)
+    except ValueError as exc:
+        raise AwardError("exercised_at must be YYYY-MM-DD") from exc
+    clin.exercised_at = when
+    session.flush()
+    record_event(
+        session,
+        action="clin_exercise",
+        entity_type="clin",
+        entity_id=clin.clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id, "exercised_at": when},
+    )
+    return clin
+
+
+def delete_clin(session: Session, award: Award, clin: Clin, *, actor_id: int | None) -> None:
+    """Remove an unexercised CLIN."""
+    if clin.award_id != award.award_id:
+        raise AwardError("clin not found")
+    if clin.exercised_at:
+        raise AwardError("exercised CLINs cannot be deleted")
+    clin_id = clin.clin_id
+    session.delete(clin)
+    session.flush()
+    record_event(
+        session,
+        action="clin_delete",
+        entity_type="clin",
+        entity_id=clin_id,
+        actor_user_id=actor_id,
+        detail={"award_id": award.award_id},
+    )
+
+
+def delete_award(session: Session, award: Award, *, actor_id: int | None) -> None:
+    """Remove an unused award and its child rows (D39)."""
+    blockers = unused_blockers(session, award.award_id)
+    if blockers:
+        raise AwardError(
+            "award has posted activity; set status to closed instead (" + ", ".join(blockers) + ")"
+        )
+    award_id = award.award_id
+    short_code = award.short_code
+    from ledger.config import get_settings
+    from ledger.services.documents import stored_path
+
+    for row in session.scalars(select(ScheduleItem).where(ScheduleItem.award_id == award_id)):
+        row.source_document_id = None
+    for row in session.scalars(select(WorkPlanItem).where(WorkPlanItem.award_id == award_id)):
+        row.source_document_id = None
+    session.flush()
+    for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
+        row.document_id = None
+    session.flush()
+    for doc in session.scalars(select(Document).where(Document.award_id == award_id)).all():
+        path = stored_path(doc)
+        if path is not None and path.is_file():
+            path.unlink()
+        session.delete(doc)
+    docs_dir = get_settings().runtime_dir() / "documents" / str(award_id)
+    if docs_dir.is_dir():
+        rmtree(docs_dir, ignore_errors=True)
+
+    for row in session.scalars(select(ScheduleItem).where(ScheduleItem.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(WorkPlanItem).where(WorkPlanItem.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(ComplianceItem).where(ComplianceItem.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(PipelineNode).where(PipelineNode.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(
+        select(FundingExpectation).where(FundingExpectation.award_id == award_id)
+    ):
+        session.delete(row)
+    for row in session.scalars(
+        select(FfpBillingPeriod).where(FfpBillingPeriod.award_id == award_id)
+    ):
+        session.delete(row)
+    for row in session.scalars(select(Assignment).where(Assignment.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(Task).where(Task.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(Clin).where(Clin.award_id == award_id)):
+        session.delete(row)
+    for row in session.scalars(select(AwardMod).where(AwardMod.award_id == award_id)):
+        session.delete(row)
+
+    policies = list(
+        session.scalars(select(AwardRatePolicy).where(AwardRatePolicy.award_id == award_id))
+    )
+    for policy in policies:
+        for override in session.scalars(
+            select(AwardRateOverride).where(AwardRateOverride.policy_id == policy.policy_id)
+        ):
+            session.delete(override)
+        policy.labor_budget_line_id = None
+    session.flush()
+    for policy in policies:
+        session.delete(policy)
+    session.flush()
+
+    versions = list(
+        session.scalars(select(BudgetVersion).where(BudgetVersion.award_id == award_id))
+    )
+    for version in versions:
+        for line in session.scalars(
+            select(BudgetLine).where(BudgetLine.budget_version_id == version.budget_version_id)
+        ):
+            session.delete(line)
+        session.delete(version)
+    session.flush()
+    session.delete(award)
+    session.flush()
+    record_event(
+        session,
+        action="award_delete",
+        entity_type="award",
+        entity_id=award_id,
+        actor_user_id=actor_id,
+        detail={"short_code": short_code},
+    )
 
 
 def current_policy(session: Session, award_id: int) -> AwardRatePolicy | None:
@@ -515,7 +1119,9 @@ def remaining_for(session: Session, award_id: int) -> AwardRemainingOut | None:
     row = session.execute(remaining_stmt(award_id)).mappings().first()
     if row is None:
         return None
-    return _remaining_out(row)
+    data = dict(row)
+    data["pipeline_cents"] = pipeline_cents_for(session, award_id)
+    return _remaining_out(data)
 
 
 def _remaining_out(row: object) -> AwardRemainingOut:
@@ -537,6 +1143,7 @@ def _remaining_out(row: object) -> AwardRemainingOut:
         remaining_approved_cents=int(data["remaining_approved_cents"]),
         remaining_funded_cents=int(data["remaining_funded_cents"]),
         unexercised_option_cents=int(data["unexercised_option_cents"]),
+        pipeline_cents=int(data.get("pipeline_cents") or 0),
     )
 
 
@@ -570,6 +1177,13 @@ def serialize_award(session: Session, award: Award) -> AwardOut:
             select(Clin).where(Clin.award_id == award.award_id).order_by(Clin.clin_number)
         )
     )
+    billing_periods = list(
+        session.scalars(
+            select(FfpBillingPeriod)
+            .where(FfpBillingPeriod.award_id == award.award_id)
+            .order_by(FfpBillingPeriod.period_number)
+        )
+    )
     remaining = remaining_for(session, award.award_id)
     line_money = line_remaining_map(session, award.award_id)
     return AwardOut(
@@ -588,11 +1202,13 @@ def serialize_award(session: Session, award: Award) -> AwardOut:
         funded_through=award.funded_through,
         awarded_cost_cents=award.awarded_cost_cents,
         funded_amount_cents=award.funded_amount_cents,
+        fee_pct=award.fee_pct,
         fee_pot_cents=award.fee_pot_cents,
         enforce_ceiling=bool(award.enforce_ceiling),
         labor_incurred=bool(award.labor_incurred),
         fee_engine=award.fee_engine,
         ceiling_warn_pct=award.ceiling_warn_pct,
+        overrun_policy=award.overrun_policy,
         current_policy=serialize_policy(session, policy) if policy else None,
         budget_lines=[
             BudgetLineOut(
@@ -610,20 +1226,11 @@ def serialize_award(session: Session, award: Award) -> AwardOut:
             )
             for line in lines
         ],
-        clins=[
-            ClinOut(
-                clin_id=row.clin_id,
-                clin_number=row.clin_number,
-                description=row.description,
-                amount_cents=row.amount_cents,
-                is_option=bool(row.is_option),
-                exercise_window_start=row.exercise_window_start,
-                exercise_window_end=row.exercise_window_end,
-                exercised_at=row.exercised_at,
-            )
-            for row in clins
-        ],
+        clins=[serialize_clin(row) for row in clins],
+        billing_periods=[serialize_billing_period(row) for row in billing_periods],
         remaining=remaining,
+        can_delete=can_delete_award(session, award.award_id),
+        type_locked=type_is_locked(session, award.award_id),
     )
 
 

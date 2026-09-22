@@ -5,8 +5,8 @@ does not undo them. Propose changes here before editing `db/schema.sql` or
 adding dependencies.
 
 Ledger is an SBIR/STTR **award operations** tool: awards, contract-specific
-labor costing, self-service time, remaining budget, and (later) schedule,
-instruments, and documents. It is not ALTUM and must not live in that repo.
+labor costing, self-service time, remaining budget, schedule, instruments,
+and documents. It is not ALTUM and must not live in that repo.
 
 ---
 
@@ -40,8 +40,9 @@ No QuickBooks/Xero sync, no general ledger, no tax/GAAP export as a
 requirement. Money in Ledger is **management actuals** for remaining budget,
 burn, and staffing.
 
-A convenience CSV dump of charges may come later (Phase 7). It is not a v1
-success criterion. Do not add accountant-mapping columns “for later.”
+A convenience CSV dump of charges is Phase 7 (D36). It is not a v1
+success criterion for the books. Do not add accountant-mapping columns
+“for later.”
 
 ---
 
@@ -115,6 +116,12 @@ their own (sole-approver bootstrap).
 
 `/approvals` is an admin-only queue. Employees see Submitted / Returned /
 Approved on their own weeks only. Bounce = comment + back to draft.
+
+Admin may enter hours for any person (`GET/PUT /people/{id}/week`,
+`POST .../submit`) so vacation or last-minute meetings do not require the
+employee’s login. Proxy save of a **submitted** week keeps it submitted.
+Approved weeks still need unapprove before recoding (D5). Employees 403
+on another person’s week. `/me/week` remains hours-only (no dollars).
 
 ---
 
@@ -215,18 +222,11 @@ default corporate Artifactory here does not publish `setuptools`.
 ## D13 — Deferred (do not build without a request)
 
 Phase 2.5 (share-readiness) is an official insert between 2 and 3. Do not
-skip 2.5. Phase 3 is tasks/assignments/capacity. Phase 4 is purchases,
-travel, commitments, and instrument splits. After 4 is Done, these remain
-later:
-
-- Phase 5 — Documents, compliance calendar
-- Phase 6 — Pipeline nodes, burn/runway, 75% and PoP alerts
-- Phase 7 — Audit *UI* and CSV dump (not books). The `audit_event` table
-  itself is Phase 2.5 (D19).
-
-Also out of v1: payroll/tax, depreciation engine, bank feeds, AI receipt
-coding, agency e-file, invoice *submission*, multi-company UI, exploding
-labor into fringe/OH/G&A journal lines, Postgres/HTTPS/SSO.
+skip 2.5. Numbered phases 0–7 are specified. Also out of v1: payroll/tax,
+depreciation engine, bank feeds, AI receipt coding, agency e-file, invoice
+*submission*, multi-company UI, exploding labor into fringe/OH/G&A journal
+lines, Postgres/HTTPS/SSO. Opt-in LAN bind and same-origin UI are D28;
+they are not a cloud rewrite.
 
 ---
 
@@ -236,11 +236,27 @@ Phases 0–2 were API-first. Phase 2.5 adds `web/` (Vite + React): `/login`,
 `/me/week`, `/approvals`, `/awards/:id`, optional `/portfolio`. The UI talks
 only to the FastAPI HTTP API. Bearer token lives in `sessionStorage`, not
 the URL. `/me/week` never shows dollars, even for an admin on that route.
+Vite on `:5173` is local development. Teammates use D28 (one origin).
 
 My week renders award + hours (and, in Phase 3, optional task). Unknown
 line fields stay ignored so later phases remain additive. Phase 4 may add
-purchases/travel on `/awards/:id` and `/instruments`. Do not add
-Phase 5–7 screens.
+purchases, travel, and cross-award splits on the consolidated `/expenses`
+register (the internal split API remains `/instruments`). Phase 5 may add
+documents on `/awards/:id` and a compliance calendar. Phase 6 may add
+pipeline nodes and burn on `/awards/:id` and an alerts list. Phase 7 may
+add `/audit` and a charges CSV. Phase 8 may add `/awards/new`, person and
+rate forms on `/people`, header/mod/policy on `/awards/:id`, and dropdowns
+on `/audit`. Phase 9 may add login management on `/people` and header /
+CLINs / unused-award delete on `/awards/:id`. Phase 10 may add `/home`
+(operations board), `/staffing` (forward plan vs capacity vs remaining),
+search in the shell, a portfolio table, planned-vs-logged hours on
+`/me/week` (no dollars), approve warnings, funding expectations, expected
+invoice dates, and compliance↔document links. Phase 11 may add End/Delete
+on unused people registers, award tasks/policies/documents/compliance, and
+unposted instruments (D45). Phase 12 may add `/help` (common language),
+contract-schedule propose/confirm on `/awards/:id`, and `/gantt` (D46–D48).
+Do not add screens beyond that map. No GL, payroll, email, or agency
+e-file (D13).
 
 ---
 
@@ -262,7 +278,8 @@ The labor multiplier is `1 + pct / 10000`. Not float. Money remains cents.
 ## D17 — Unexercised options are CLINs, not remaining
 
 `clin.is_option = 1` and `exercised_at IS NULL` is pipeline money. Remaining
-views never add it. A dedicated `pipeline_node` table waits for Phase 6.
+views never add it. Other forecast (next phase, commercial, proposal) is
+`pipeline_node` (D32), also excluded from remaining.
 
 `budget_template_line` and `rate_policy_template` are lookups, not new
 domain tables beyond the Phase 1 freeze.
@@ -290,8 +307,11 @@ One `audit_event` table: who, when, action, entity_type, entity_id,
 optional JSON detail. Write events for: login failure (never store the
 password), password change, person/rate create, award create, policy
 revision, week submit / approve / return, task create, assignment create,
-capacity create, commitment create / post / cancel, instrument create. Do not
+capacity create, commitment create / post / cancel, instrument create,
+document create / file, compliance create / status, pipeline create /
+update / delete, and Phase 11 unused-row deletes (D45). Do not
 update or delete audit rows. `GET /admin/audit` is admin-only JSON.
+Phase 7 adds the UI and optional filters (D35), not a second table.
 
 ---
 
@@ -333,24 +353,26 @@ Proposed tables/columns (Phase 3 freeze; ask before adding more):
 
 ---
 
-## D23 — Assignments propose a week; they do not post
+## D23 — Assignments set a monthly plan; they do not post
 
-An assignment is dated planned hours for one person on one award
-(optional task). It prefills a **newly created** empty draft week (D7).
-It does not insert `charge` rows, auto-submit, or rewrite a week the
-employee already has.
+An assignment is dated planned hours per calendar month for one person on one
+award (optional task). It does not insert `charge` rows, auto-submit, prefill
+worked hours, or rewrite a week the employee already has.
 
-If an assignment overlaps any day of the calendar week, prefill the
-**full** `hours_hundredths_per_week` on Monday (`week_start`). No daily
-proration. Multiple assignments → multiple lines.
+My week shows monthly planned, logged, and remaining hours. Employees place
+their actual hours on the days worked. A week crossing a month boundary shows
+each month separately, and each timesheet line counts toward the month of its
+`work_date`.
 
-Submit does not have to match the plan (D10). Planned vs actual is an
-admin hours view, not a validation rule.
+Weekly staffing projections prorate monthly hours over the working weekdays in
+each calendar month. Submit does not have to match the plan (D10). Approval
+warns when cumulative logged hours exceed the monthly assignment; it does not
+block.
 
 Proposed table:
 
 - `assignment` — `assignment_id`, `person_id`, `award_id`, `task_id`
-  (nullable), `hours_hundredths_per_week`, `effective_from`, `effective_to`,
+  (nullable), `hours_hundredths_per_month`, `effective_from`, `effective_to`,
   `created_at`, `created_by`
 
 Revisions are new rows (D5). Audit `assignment_create` (D19).
@@ -387,7 +409,9 @@ A purchase, travel booking, or instrument share is **committed** while
 Posting writes one `charge` (`source` = `purchase` | `travel` |
 `instrument`) for the same cents and category, then sets the commitment
 `posted`. Cancel is only for `open` rows. Posted money is not edited in
-place (D5).
+place (D5). Deleting a posted expense inserts a reversing charge, then
+removes the commitment row so a mistaken entry does not linger. Shared
+splits delete the whole instrument the same way.
 
 Proposed table:
 
@@ -425,3 +449,517 @@ Posting the instrument posts those commitments.
 `cents_i = amount_cents × share_pct // 10000` for every share except the
 last; the last share is `amount_cents − sum(previous)` so posted charges
 sum to the instrument total. Never float.
+
+---
+
+## D28 — One machine serves the site; LAN bind is opt-in
+
+Teammates open Ledger in a browser on their own computers. They do not
+install Node or run Vite. `python tasks.py build-ui` writes `web/dist/`.
+FastAPI serves that folder on the same origin as the API. Browser
+navigation sends `Accept: text/html` and gets `index.html`; `fetch` from
+the UI sends `Accept: application/json` and hits the API. Default
+`api.js` calls are same-origin (no hardcoded `127.0.0.1:8000`).
+
+`LEDGER_API_HOST` defaults to `127.0.0.1`. Sharing requires
+`LEDGER_API_HOST=0.0.0.0` (or another non-loopback bind). `tasks.py run`
+refuses a non-loopback bind while `LEDGER_SECRET_KEY` is still the
+shipped default. HTTPS and SSO stay out of v1 (D13). SQLite stays on the
+host’s local disk (D15). Windows Firewall and “stay up when I log off”
+are OS work, not a product rewrite.
+
+A second team gets their own folder (`python tasks.py pack` →
+`dist/ledger-team/`, then zip). Each host has its own `.env`, secret, and
+SQLite. Do not merge databases. PyInstaller / a single `.exe` is not
+required for this layout.
+
+---
+
+## D29 — Documents are a register plus optional local files
+
+A document is metadata on one `award` (kind, title, optional date, notes).
+A file is optional. Files live under the host data dir
+(`runtime_dir()/documents/{award_id}/{document_id}{ext}`), not in SQLite
+and not on a UNC share (D15). No S3, SharePoint, or versioning: a new
+fact is a new row (D5). Max upload 20 MiB. Allowed suffixes: pdf, doc,
+docx, xls, xlsx, png, jpg, jpeg, txt, csv, zip.
+
+Proposed tables:
+
+- `document_kind` — lookup (`contract`, `mod`, `report`, `invoice`,
+  `correspondence`, `other`)
+- `document` — `document_id`, `award_id`, `kind_code`, `title`,
+  `document_date` (nullable ISO), `notes`, `original_filename` (nullable),
+  `stored_ext` (nullable), `content_type` (nullable), `size_bytes`
+  (nullable), `created_at`, `created_by`
+
+Admin-only. Employees 403. D18 award cards unchanged. Remaining $ is
+unchanged. Closed and pipeline awards still accept documents (archive).
+
+---
+
+## D30 — Compliance items are dated obligations, not money
+
+A compliance item is a due date on one award (report, PoP end, IRB,
+invoice, other). It does not move remaining, committed, or actual (D4).
+Burn/75%/PoP *alerts* are D34, not this table. Status is `open` | `done` |
+`waived`. Marking `done` sets `completed_at`; it does not delete the row.
+
+Proposed tables:
+
+- `compliance_kind` — lookup
+- `compliance_status` — `open`, `done`, `waived`
+- `compliance_item` — `compliance_item_id`, `award_id`, `kind_code`,
+  `title`, `due_date`, `status_code`, `notes`, `completed_at`,
+  `created_at`, `created_by`
+
+Admin-only. `GET /compliance` lists across awards (calendar). Employees
+403.
+
+---
+
+## D31 — Document and compliance writes are audited; files are not tokens
+
+Audit `document_create`, `document_file`, `compliance_create`,
+`compliance_status` (D19). Download uses the same bearer token as other
+admin GETs; do not put the token in the file URL. No public/unauthenticated
+file path.
+
+---
+
+## D32 — Pipeline nodes are forecast, never remaining
+
+A `pipeline_node` is named future money on one award: next phase,
+commercial follow-on, a proposal, or other. It is D4 state 5. It is **not**
+an unexercised CLIN (those stay `clin.is_option`, D17). There is no
+“include in remaining” checkbox; remaining views never add these cents.
+
+`amount_cents` is integer cents. Optional `expected_date` is ISO. Forecast
+is not a posted charge, so PATCH and DELETE are allowed (unlike labor).
+Closed awards reject new nodes. Pipeline and active awards accept them.
+
+Proposed tables:
+
+- `pipeline_kind` — lookup (`next_phase`, `commercial`, `proposal`, `other`)
+- `pipeline_node` — `pipeline_node_id`, `award_id`, `kind_code`, `title`,
+  `amount_cents`, `expected_date` (nullable), `notes`, `created_at`,
+  `created_by`
+
+Admin-only. Employees 403. D18 cards unchanged. `remaining_approved_cents`
+and `remaining_funded_cents` unchanged. `pipeline_cents` may be shown as
+its own number next to `unexercised_option_cents`.
+
+---
+
+## D33 — Burn, EAC, and runway are integer projections from charges
+
+Monthly burn is `SUM(charge.amount_cents)` by `award_id` and
+`substr(work_date, 1, 7)` (`v_award_burn_monthly`). Charges with a null
+`work_date` are omitted.
+
+As-of a date (default today):
+
+- Selectable trailing windows are 30, 60, or 90 days ending on `as_of`,
+  never before `pop_start`; 90 remains the default.
+- `daily_burn_cents` = window actuals // days in window (truncate).
+- `eac_cents` = actual-to-date + `daily_burn_cents` × days from `as_of`
+  through `pop_end` (0 days if `as_of` is after `pop_end`).
+- `runway_days` = `remaining_approved_cents` // `daily_burn_cents`, or
+  null when daily burn is 0.
+
+The dedicated admin `/forecast` chart defaults to all awards, with a
+stable color per award, and can filter to one award shown in one
+consistent project color for project-level runway and cumulative lines.
+It displays cumulative actual and projected burn, monthly actuals,
+assignment-based loaded labor plan, open commitments by expected/effective
+month, expected funding increments, and financial runway versus days to
+PoP end. Monthly expense-mix and plan/actual views use stable category
+colors (labor green, travel blue, ODC orange, equipment purple,
+subcontracts red, indirect gray, and fee gold). A single-award view also
+shows approved and funded ceilings. Plans, commitments, and expected
+funding remain separate series: none silently changes actuals or remaining.
+These representations do not live on award detail pages.
+
+This is management projection, not EVM (no BCWS/SPI/CPI). Assignment
+costs use the dated rate stack and assignment overlap in each calendar
+month. No float. No email. Employees 403.
+
+---
+
+## D34 — 75% and PoP alerts are computed on read; they are not mail
+
+`GET /alerts` is admin-only and computed. Do not store alert rows. Do not
+email. `as_of` is a query date (default today). Only `active` awards.
+
+- `burn_ceiling`: `actual_cents * 100 >= basis_cents * ceiling_warn_pct`.
+  `basis_cents` is `funded_amount_cents` when `enforce_ceiling`, else
+  `approved_cents`. `ceiling_warn_pct` is already on the award (0–100,
+  default 75). Skip when basis is 0.
+- `pop_end`: `(pop_end − as_of).days <= 30`, including overdue.
+
+Compliance due dates stay on `/compliance` (D30). D18 unchanged.
+
+---
+
+## D35 — Audit UI lists events; it does not rewrite them
+
+`audit_event` stays append-only (D19). Phase 7 is a screen and optional
+query filters on `GET /admin/audit`: `action`, `entity_type`,
+`occurred_from`, `occurred_to`, `limit` (default 500, max 2000). Newest
+first. The UI lives at `/audit` and calls that API. Do not PATCH, DELETE,
+or edit `detail`. Never show a password (none are stored). Employees 403.
+D18 unchanged.
+
+---
+
+## D36 — Charges CSV is a dump of posted charges, not the books
+
+`GET /admin/charges.csv` is an admin convenience download of `charge`
+rows (optional `award_id`, `work_from`, `work_to`). Columns are existing
+charge facts plus `award_short_code` for readability. Money stays integer
+cents. Do not add GL accounts, vendor masters, or QuickBooks mapping
+columns (D3, D13). Employees 403. Same bearer token as other admin GETs;
+do not put the token in the URL.
+
+---
+
+## D37 — Admins enter awards and people in the app, not in `/docs`
+
+Phases 0–2 were API-first (D14). After Phase 7 the remaining daily-admin
+gap is intake: create a person and base rate, create an award, record a
+mod, revise a rate policy, and pick audit filters from lists.
+
+Phase 8 is UI over existing write APIs (`POST /people`,
+`POST /people/{id}/rates`, `POST /awards`, `PATCH /awards/{id}`,
+`POST /awards/{id}/mods`, `POST /awards/{id}/rate-policies`). No new
+tables. Money stays integer cents on the wire; the UI shows dollars.
+Percents stay hundredths of a percent on the wire (D16); the UI shows
+percent points. Agency still grows when a new string is saved (D1).
+Rate-policy revisions remain new dated rows (D5). Unexercised options
+stay CLINs (D17), not remaining; the create wizard may omit CLINs.
+
+`GET /lookups` may list `audit_actions` and `audit_entity_types` for
+admins so the Audit screen does not require typing codes. That list is
+not a table. Employees still receive `time_codes` only (D18).
+
+FastAPI `/docs` is not the operator console. Do not add payroll, GL,
+email, or SSO (D13).
+
+---
+
+## D38 — Admins manage logins in the app; the last admin cannot be removed
+
+Admin `PATCH /people/{id}` may set `role_code` and `is_active` on an
+existing login. Admin `POST /people/{id}/password` sets a new password
+without the current one (reset). Both require a login on that person.
+Username stays immutable. Employees 403.
+
+Reset stamps `password_changed_at` so earlier tokens die (D20). Do not
+store the new password in audit `detail`. Actions: `person_update`,
+`password_reset`.
+
+The last **active admin** cannot be demoted or deactivated (409). An
+inactive admin does not count. No email reset (D20). No SSO (D13).
+
+---
+
+## D39 — Award facts can be edited; unused awards can be deleted; used awards close
+
+`PATCH /awards/{id}` may also set `short_code`, `instrument_code`,
+`mechanism_code`, and `phase_code`. Money and PoP still go through a mod
+(D5). `type_code` may change only while the award has no `charge` and no
+`commitment`; then restamp `enforce_ceiling`, `labor_incurred`,
+`fee_engine`, and `ceiling_warn_pct` from the type. After that, type is
+locked.
+
+CLINs are admin CRUD on the award: create, patch, exercise (`exercised_at`),
+delete only while `exercised_at` is null. Exercising an option drops it
+from `unexercised_option_cents`; it does not by itself change funded
+remaining (record a mod for money). D17 unchanged.
+
+`DELETE /awards/{id}` is allowed only when unused: no `charge`, no
+`commitment`, no `timesheet_line.award_id`, no `instrument_share`.
+Otherwise 409 — set `status_code = closed` instead. Delete removes the
+award’s child rows and on-disk document files. Posted actuals are never
+stripped. Employees 403. D18 cards unchanged.
+
+---
+
+## D40 — Home is this week’s decisions, not a mailbox
+
+Admin `GET /home?as_of=` is computed on read: missing timesheets for the
+week containing `as_of`, submitted approvals, compliance due within 14
+days, open commitments whose expected (or effective) date is 14+ days
+ago, a month-close checklist through that week, and one portfolio row
+per award (remaining funded/approved, runway, alert flags, next
+compliance due). Not email (D34). Employees 403. D18 unchanged.
+
+Admin `GET /search?q=` matches award short code/title, person name/
+username, CLIN number, document title, and glossary aliases (D46). No
+dollars in search hits that employees could see — the route is
+admin-only. Authenticated `GET /glossary` is the help list (employees
+included).
+
+---
+
+## D41 — Staffing is a forward view; assignments still do not post
+
+Admin `GET /staffing?week_start=&weeks=` (default 8, max 12) compares
+weekly capacity, projected assignment hours, and logged hours per person per
+week. Monthly assignments are prorated by working weekdays for this projection.
+Slack and overload are informational. Plan dollars use the current rate stack
+as-of that Monday (preview, not a charge) and are compared to remaining
+personnel and remaining funded. Hours by task vs assignment travel with the
+same payload.
+
+`POST /staffing/scenario` answers “what if this person works N hours/month
+on this award” for a number of months. It does not write rows.
+
+Utilization is hours by `time_code` (award vs `ird`/`bp`/`pto`/`holiday`),
+not payroll. Included on staffing. Employees 403. Assignments guide time entry;
+they do not prefill or post worked hours.
+
+---
+
+## D42 — Expected invoices, funding expectations, and compliance files
+
+`commitment.expected_date` is optional ISO. Aging uses
+`COALESCE(expected_date, effective_date)`. It is not remaining.
+
+`funding_expectation` is a dated expected increment (cents + notes) on
+one award. It is **not** remaining and **not** a pipeline node (D32) and
+**not** an unexercised CLIN (D17). Recording a mod is what changes
+funded remaining (D5).
+
+`compliance_item.document_id` may point at a document on the same award.
+Linking a file does not auto-complete the item.
+
+Exercising a CLIN still does not change funded remaining (D39). The UI
+prompts for a mod; Ledger does not invent one.
+
+---
+
+## D43 — Overrun policy is stop / warn / allow; employees stay unconstrained
+
+`award.overrun_policy` is stamped from `award_type` (`stop`, `warn`,
+`allow`) and may be patched later. Defaults: CPFF/TM/grant `stop`, FFP
+`warn`, internal `allow`. `enforce_ceiling` still gates the hard 409
+when remaining **funded** would go negative (existing Phase 2 rule).
+
+On **admin approve** (not employee submit):
+
+- Closed award or closed task is still 400 on the week write (D22).
+- `stop` + `enforce_ceiling`: 409 if this week’s labor would exceed
+  funded remaining (unchanged).
+- `warn`: approve succeeds; the response includes warnings when hours on
+  an award exceed that week’s assignment, or remaining personnel or
+  funded would go negative.
+- `allow`: no remaining warnings; assignment-exceed is still a warning.
+
+Employee submit stays unconstrained (D10): no 40-hour rule, no
+must-match-assignment, no warn-on-submit. `/me/week` may show planned
+hours vs logged hours **without dollars** (D18, D11 employee display).
+
+---
+
+## D44 — As-of dates are shared; close is a checklist
+
+Home, staffing, utilization, burn, alerts, and the portfolio table share
+an `as_of` or `week_start` (Monday). Month-close on `/home` lists weeks
+not approved through that Monday, draft periods, and open commitments.
+The charges CSV (D36) remains the dump; close does not post to a GL.
+
+---
+
+## D45 — Unused rows can be deleted; consumed history is not rewritten
+
+Dated rates, capacity, assignments, and policies stay append-only when they
+priced or posted money (D5). A **typo** is not history.
+
+- **Unused:** no posted `charge` snapshots this row (`person_rate_id` /
+  `policy_id`). Assignments and capacity never post. Open or cancelled
+  purchase/travel commitments (including posted mistakes after a reversing
+  charge), open compliance, unlinked documents, and instruments (including
+  posted splits after reversing each share) are unused. `DELETE` is 204.
+  If this row had closed a previous open dated row, reopen that predecessor
+  (`effective_to` repaired to abut the next remaining row, or null). Cancel
+  remains for a real purchase that will not happen; Delete removes a typo
+  so it does not linger as cancelled.
+- **End:** `PATCH` `effective_to` (and assignment hours) on a plan row
+  that should stop. Prefer End when the fact was real; Delete when it was
+  a mistake.
+- **Consumed:** a charge used this rate or policy, a timesheet used this
+  task, or the person has a timesheet/charge/audit-as-actor. **409**.
+  The UI still shows Delete on the row and reports that error. Correction
+  is a new dated row, deactivate, or close — not an in-place rewrite.
+  Award mods stay append-only (record a correcting mod). Posted expense
+  charges are reversed, then the commitment is deleted (D5, D25). Audit
+  rows are never deleted (D19).
+
+`PATCH /people/{id}` may set `display_name`, `email`, `hire_date`,
+`term_date`, and `labor_category` without a login. Role/active still
+require a login (D38). Last active admin cannot be deleted.
+
+Employees 403. D18 unchanged. Remaining views unchanged. No new tables.
+
+---
+
+## D46 — Common language is a glossary, not a chatbot
+
+Operators ask “where is remaining?” or “what is a CLIN?” Search and Help
+use one vocabulary. `glossary_term` is the Ledger word (`remaining`,
+`task`, `schedule`). `glossary_alias` maps everyday phrases (`what’s
+left`, `SOW item`, `Gantt`) onto that word. Hits link to a screen
+(`href`), not a generated answer.
+
+No LLM. Definitions are seed data. Admins see glossary hits in
+`GET /search`. Anyone logged in can `GET /glossary` and open `/help`.
+D18 unchanged: employees still do not see dollars.
+
+---
+
+## D47 — Contract schedule is proposed, then confirmed
+
+A `schedule_item` is a dated milestone, deliverable, report, or PoP mark
+on one award. It is **not** remaining money (D4), **not** a timesheet
+task (D22), and **not** a compliance obligation (D30). Status is `open` |
+`done` | `waived`, same pattern as compliance. Optional `start_date`;
+`due_date` is required. Optional `source_document_id` on the same award.
+
+`POST /awards/{id}/schedule/propose` builds a **draft** from:
+
+1. The award PoP and phase (a starter template the operator can edit).
+2. Optional pasted text and/or a stored `.txt`, `.csv`, `.docx`, or
+   text-based `.pdf` contract file (dated lines that look like
+   deliverables). Scanned PDFs need OCR outside Ledger or pasted text.
+
+When a contract contains DD Form 1423 CDRLs, extraction reads the
+Section F PoP and resolves common schedule rules including DAC (days
+after contract award), EOC, monthly/quarterly intervals, and dates
+relative to the end of the PoP. Structured CDRL rows replace generic
+phase-template rows in that proposal. This does not silently modify the
+award header; a PoP mismatch is shown for operator review.
+CDRL start dates are explicitly marked as inferred: the first recurring
+row begins at the contract PoP start, later recurring rows begin at the
+previous submission due date, final-report final begins at draft due,
+and EOC/ASREQ rows without a stated duration are point deliverables.
+Generic rows with only a due date are also points, not bars beginning at
+the award PoP start.
+
+The contract-schedule panel may upload `.pdf`, `.doc`, and `.docx`
+directly into the existing document register (D29). Legacy binary `.doc`
+files are stored but not parsed; convert them to `.docx` or paste the
+relevant SOW text before proposing.
+
+Nothing is written until `POST /awards/{id}/schedule/confirm` with the
+rows the operator kept. Confirm is additive; it does not invent funded
+cents or tasks. Manual `POST` / `PATCH` / `DELETE` remain for typos
+(D45: unused schedule rows delete).
+
+Admin-only writes. Remaining views unchanged.
+
+Proposed tables:
+
+- `schedule_kind` — `milestone`, `deliverable`, `report`, `pop`, `other`
+- `schedule_item` — `schedule_item_id`, `award_id`, `kind_code`, `title`,
+  `start_date` (nullable ISO), `due_date`, `status_code` (FK
+  `compliance_status`), `notes`, `completed_at`, `source_document_id`,
+  `origin_code` (`template` | `extract` | `manual`), `created_at`,
+  `created_by`
+
+---
+
+## D48 — The Gantt is a read of confirmed schedule rows
+
+`GET /awards/{id}/gantt` and `GET /gantt` compute bars from `schedule_item`
+plus the award PoP window. No stored Gantt table. No MS Project file.
+
+As-of today (ISO dates, no float):
+
+- **completed** — `status_code` is `done` or `waived`
+- **remaining** — `open` and `due_date >= as_of`
+- **behind** — `open` and `due_date < as_of`
+
+Bar start is `start_date` or, for a point item, `due_date`. Bar end is `due_date`.
+The UI at `/gantt` (and the award page) is printable. The all-awards chart
+colors bars per award with a legend; behind-schedule bars keep a red edge.
+A single award keeps the completed / remaining / behind lane colors.
+Employees may read Gantt APIs. D18 unchanged.
+
+---
+
+## D49 — SOW work progress is separate from deliverables and time tasks
+
+`work_plan_item` represents a numbered technical requirement from the
+contract SOW. It is not a CDRL `schedule_item`, not a timesheet `task`,
+and does not affect remaining money. Operators may propose rows from
+numbered SOW headings, confirm selected rows, then edit requirement code,
+title, dates, order, notes, and percent complete.
+
+Percent complete is integer hundredths of a percent (D16): `5000` means
+50%. It is maintained by the operator, not inferred from timesheet hours.
+The separate `/work-gantt` chart shows the full planned bar with a
+percent-complete fill and completed / remaining / behind state. It is
+printable for monthly reports and presentations.
+
+One award is ordered by its SOW order so the chart reads like the
+statement of work. The all-awards chart is ordered by start date instead,
+so current work sits together, and each award gets its own bar color with
+a legend; behind-schedule bars keep a red edge. Single-award charts keep
+the lane colors and the progress ramp.
+
+Extracted requirement dates are explicitly a starter plan: top-level SOW
+headings (for example 4.1, 4.2) are spaced sequentially across the
+contract PoP and must be reviewed before confirmation. Confirmed rows
+remain editable; extraction never silently changes existing rows.
+
+---
+
+## D50 — A budget version holds one line per category
+
+`budget_line` is unique on `(budget_version_id, category_code)` and
+`budget_template_line` is unique on `(award_type_code, category_code)`.
+A category appears at most once per version, so approved money cannot be
+counted twice and the award page cannot list a category twice.
+
+Two paths used to create repeats and are now closed:
+
+- replaying `db/schema.sql` re-inserted the template seeds, because
+  `INSERT OR IGNORE` had no unique key to conflict with
+- a modification copied the active version forward line by line, carrying
+  any existing repeat into every later version
+
+`apply_schema_sql` dedupes before it builds the unique indexes, so an
+existing database is repaired in place: the lowest `budget_line_id` per
+category survives and keeps the largest approved amount in the structurally
+duplicated group. `charge.budget_line_id` plus
+`award_rate_policy.labor_budget_line_id` are repointed to that survivor before
+the extras are deleted. An award or modification with two lines in one
+category is a 400, not a merge. Genuine funding changes are dated
+modifications (D51), not repeated budget rows.
+
+---
+
+## D51 — CPFF fee is fixed; FFP fee and billing derive from funding
+
+Fee intake follows the award type:
+
+- **CPFF** stores the negotiated fixed fee in `award.fee_pot_cents`. It does
+  not request or store a fee percentage and fee is never part of hourly burden.
+- **FFP** stores a management fee/profit percentage in `award.fee_pct`.
+  `fee_pot_cents` and the active fee budget line are calculated as
+  `round(funded_amount_cents × fee_pct / 10000)`. Operators cannot enter an
+  independent FFP fee amount. FFP fee is not part of hourly burden.
+
+An FFP award gets persisted `ffp_billing_period` rows. Periods are contract
+working months anchored to the PoP start, not calendar months. Funded contract
+value is divided evenly across those periods; indivisible cents go in the final
+period so the schedule sums exactly to funded value.
+
+Submitting a period records its scheduled amount and date. A later
+modification on the same contract keeps submitted periods, subtracts their
+submitted dollars from the new funded total, and redistributes the remainder
+over working months after the last submitted period. Funding cannot be reduced
+below submitted invoices. Additional funding or a PoP extension is a
+modification; create a new award only for a genuinely separate project or
+contract.
