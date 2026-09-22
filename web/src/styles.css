@@ -583,6 +583,35 @@ ol.steps .current {
   margin-top: 0;
 }
 
+.portfolio-windows {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.portfolio-windows > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.portfolio-windows > div > div {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(100px, 1fr) 9rem;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.portfolio-windows i {
+  display: block;
+  min-width: 2px;
+  height: 0.55rem;
+  border-radius: 2px;
+}
+
+.forecast-measures {
+  font-size: 0.78rem;
+}
+
 @media (max-width: 600px) {
   .window-comparison {
     grid-template-columns: 1fr;

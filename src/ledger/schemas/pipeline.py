@@ -73,6 +73,10 @@ class AwardBurnOut(BaseModel):
     """Monthly burn plus integer EAC and runway (D33)."""
 
     award_id: int
+    award_short_code: str
+    award_title: str
+    status_code: str
+    pop_end: str
     as_of: str
     actual_cents: int
     remaining_approved_cents: int

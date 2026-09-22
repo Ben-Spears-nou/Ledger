@@ -558,12 +558,15 @@ As-of a date (default today):
 - `runway_days` = `remaining_approved_cents` // `daily_burn_cents`, or
   null when daily burn is 0.
 
-The award forecast displays cumulative actual and projected burn against
-approved and funded ceilings, monthly actuals, assignment-based loaded
-labor plan, open commitments by expected/effective month, and expected
-funding increments. Plans, commitments, and expected funding remain
-separate series: none silently changes actuals or remaining. The portfolio
-compares financial runway with days to PoP end.
+The dedicated admin `/forecast` chart defaults to all awards, with a
+stable color per award, and can filter to one award shown in one
+consistent project color. It displays cumulative actual and projected
+burn, monthly actuals, assignment-based loaded labor plan, open
+commitments by expected/effective month, expected funding increments,
+and financial runway versus days to PoP end. A single-award view also
+shows approved and funded ceilings. Plans, commitments, and expected
+funding remain separate series: none silently changes actuals or
+remaining. These representations do not live on award detail pages.
 
 This is management projection, not EVM (no BCWS/SPI/CPI). Assignment
 costs use the dated rate stack and assignment overlap in each calendar

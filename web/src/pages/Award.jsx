@@ -13,7 +13,6 @@ import {
   todayIso,
   uploadDocumentFile,
 } from "../api.js";
-import BurnForecast from "../components/BurnForecast.jsx";
 import CollapsibleSection from "../components/CollapsibleSection.jsx";
 
 function dollarsToCents(value) {
@@ -153,9 +152,6 @@ export default function Award() {
   const [complianceKinds, setComplianceKinds] = useState([]);
   const [pipelineKinds, setPipelineKinds] = useState([]);
   const [pipeline, setPipeline] = useState([]);
-  const [burn, setBurn] = useState(null);
-  const [burnAsOf, setBurnAsOf] = useState(todayIso());
-  const [burnWindow, setBurnWindow] = useState(90);
   const [alerts, setAlerts] = useState([]);
   const [pipeForm, setPipeForm] = useState({
     kind_code: "next_phase",
@@ -316,35 +312,16 @@ export default function Award() {
       throw err;
     }
     try {
-      const [pipelineList, burnData, alertList] = await Promise.all([
+      const [pipelineList, alertList] = await Promise.all([
         api(`/awards/${id}/pipeline`),
-        api(`/awards/${id}/burn`, {
-          query: { as_of: burnAsOf, window_days: burnWindow },
-        }),
         api("/alerts", { query: { award_id: id, as_of: todayIso() } }),
       ]);
       setPipeline(pipelineList);
-      setBurn(burnData);
       setAlerts(alertList);
     } catch (err) {
       setPipeline([]);
-      setBurn(null);
       setAlerts([]);
       throw err;
-    }
-  }
-
-  async function loadBurn(nextAsOf = burnAsOf, nextWindow = burnWindow) {
-    setError("");
-    try {
-      const data = await api(`/awards/${id}/burn`, {
-        query: { as_of: nextAsOf, window_days: nextWindow },
-      });
-      setBurnAsOf(nextAsOf);
-      setBurnWindow(nextWindow);
-      setBurn(data);
-    } catch (err) {
-      setError(err.message);
     }
   }
 
@@ -1734,16 +1711,6 @@ export default function Award() {
               </li>
             ))}
           </ul>
-        </CollapsibleSection>
-      ) : null}
-      {burn ? (
-        <CollapsibleSection title="Burn and runway forecast">
-          <BurnForecast
-            burn={burn}
-            asOf={burnAsOf}
-            onAsOfChange={(value) => loadBurn(value, burnWindow)}
-            onWindowSelect={(days) => loadBurn(burnAsOf, days)}
-          />
         </CollapsibleSection>
       ) : null}
       <CollapsibleSection title="Pipeline">

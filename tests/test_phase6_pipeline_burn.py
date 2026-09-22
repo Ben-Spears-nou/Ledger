@@ -236,6 +236,7 @@ def test_employee_forbidden_and_d18_card_unchanged(client: TestClient) -> None:
     emp = auth_header(alex)
     assert client.get(f"/awards/{award['award_id']}/pipeline", headers=emp).status_code == 403
     assert client.get(f"/awards/{award['award_id']}/burn", headers=emp).status_code == 403
+    assert client.get("/forecast", headers=emp).status_code == 403
     assert client.get("/alerts", headers=emp).status_code == 403
     lookups = client.get("/lookups", headers=emp)
     assert lookups.status_code == 200
@@ -245,4 +246,12 @@ def test_employee_forbidden_and_d18_card_unchanged(client: TestClient) -> None:
     assert set(card.json()[0]) == D18_KEYS
     kinds = client.get("/lookups", headers=auth_header(admin)).json()
     assert any(row["kind_code"] == "next_phase" for row in kinds["pipeline_kinds"])
+    forecast = client.get(
+        "/forecast",
+        params={"as_of": "2026-06-01", "window_days": 60},
+        headers=auth_header(admin),
+    )
+    assert forecast.status_code == 200, forecast.text
+    assert forecast.json()[0]["award_short_code"] == "P6E"
+    assert forecast.json()[0]["selected_window_days"] == 60
     assert _remaining_approved(client, admin, award["award_id"]) >= 0

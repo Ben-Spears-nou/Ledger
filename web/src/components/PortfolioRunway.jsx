@@ -11,9 +11,7 @@ const GRID = "#ddd8cb";
 const DANGER = "#8a1f1f";
 
 export default function PortfolioRunway({ rows }) {
-  const usable = rows.filter(
-    (row) => row.status_code === "active" && row.days_to_pop_end >= 0,
-  );
+  const usable = rows.filter((row) => row.days_to_pop_end >= 0);
   if (!usable.length) return <p className="muted">No active runway data.</p>;
   const maxDays = Math.max(
     ...usable.flatMap((row) => [row.days_to_pop_end || 0, row.runway_days || 0]),
@@ -48,13 +46,14 @@ export default function PortfolioRunway({ rows }) {
             const yy = PAD + index * ROW_HEIGHT + ROW_HEIGHT / 2;
             const runway = row.runway_days;
             const popDays = row.days_to_pop_end;
+            const shortCode = row.short_code || row.award_short_code;
             const color = awardBarColors(index).fill;
             const shortfall = runway !== null && runway < popDays;
             return (
               <g key={row.award_id}>
                 <Link to={`/awards/${row.award_id}`}>
                   <text x={LABEL - 10} y={yy + 4} textAnchor="end" fontSize="11" fill={INK}>
-                    {row.short_code}
+                    {shortCode}
                   </text>
                 </Link>
                 {runway !== null ? (
@@ -66,7 +65,7 @@ export default function PortfolioRunway({ rows }) {
                     rx="3"
                     fill={color}
                   >
-                    <title>{`${row.short_code}: ${runway} runway days`}</title>
+                    <title>{`${shortCode}: ${runway} runway days`}</title>
                   </rect>
                 ) : (
                   <text x={LABEL + 5} y={yy + 4} fontSize="10" fill={MUTED}>
@@ -92,7 +91,7 @@ export default function PortfolioRunway({ rows }) {
                   stroke={INK}
                   strokeWidth="2"
                 >
-                  <title>{`${row.short_code}: ${popDays} days to PoP end (${row.pop_end})`}</title>
+                  <title>{`${shortCode}: ${popDays} days to PoP end (${row.pop_end})`}</title>
                 </line>
                 {shortfall ? (
                   <text x={x(popDays) + 5} y={yy + 4} fontSize="10" fill={DANGER}>

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_db, require_admin
-from ledger.models import UserAccount
+from ledger.models import Award, UserAccount
 from ledger.models.pipeline import PipelineNode
 from ledger.schemas.pipeline import (
     AlertOut,
@@ -30,6 +31,7 @@ award_pipeline_router = APIRouter(prefix="/awards", tags=["pipeline"])
 pipeline_router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 award_burn_router = APIRouter(prefix="/awards", tags=["burn"])
 alerts_router = APIRouter(prefix="/alerts", tags=["alerts"])
+forecast_router = APIRouter(prefix="/forecast", tags=["burn"])
 
 
 def _http(exc: PipelineError | BurnError, *, not_found: bool = False) -> HTTPException:
@@ -131,6 +133,23 @@ def get_award_burn(
         return award_burn(session, award, as_of=as_of, window_days=window_days)
     except (PipelineError, BurnError) as exc:
         raise _http(exc, not_found=str(exc) == "award not found") from exc
+
+
+@forecast_router.get("", response_model=list[AwardBurnOut])
+def get_portfolio_forecast(
+    as_of: str | None = Query(default=None),
+    window_days: int = Query(default=90),
+    session: Session = Depends(get_db),
+    _admin: UserAccount = Depends(require_admin),
+) -> list[AwardBurnOut]:
+    """The same forecast series for every award, ordered by short code."""
+    try:
+        return [
+            award_burn(session, award, as_of=as_of, window_days=window_days)
+            for award in session.scalars(select(Award).order_by(Award.short_code))
+        ]
+    except BurnError as exc:
+        raise _http(exc) from exc
 
 
 @alerts_router.get("", response_model=list[AlertOut])

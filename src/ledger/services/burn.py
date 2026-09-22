@@ -271,6 +271,10 @@ def award_burn(
     runway_end = (as_of_d + timedelta(days=runway)).isoformat() if runway is not None else None
     return AwardBurnOut(
         award_id=award.award_id,
+        award_short_code=award.short_code,
+        award_title=award.title,
+        status_code=award.status_code,
+        pop_end=award.pop_end,
         as_of=as_of_d.isoformat(),
         actual_cents=actual,
         remaining_approved_cents=remaining_approved,

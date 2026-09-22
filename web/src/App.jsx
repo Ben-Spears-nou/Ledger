@@ -7,6 +7,7 @@ import Audit from "./pages/Audit.jsx";
 import Award from "./pages/Award.jsx";
 import AwardNew from "./pages/AwardNew.jsx";
 import Compliance from "./pages/Compliance.jsx";
+import Forecast from "./pages/Forecast.jsx";
 import Gantt from "./pages/Gantt.jsx";
 import Help from "./pages/Help.jsx";
 import Home from "./pages/Home.jsx";
@@ -59,6 +60,7 @@ const NAV_GROUPS = [
   {
     label: "Charts",
     items: [
+      { to: "/forecast", text: "Burn & Runway", admin: true },
       { to: "/gantt", text: "Gantt" },
       { to: "/work-gantt", text: "Work Gantt" },
     ],
@@ -273,6 +275,16 @@ export default function App() {
           <RequireAdmin>
             <Shell>
               <Audit />
+            </Shell>
+          </RequireAdmin>
+        }
+      />
+      <Route
+        path="/forecast"
+        element={
+          <RequireAdmin>
+            <Shell>
+              <Forecast />
             </Shell>
           </RequireAdmin>
         }

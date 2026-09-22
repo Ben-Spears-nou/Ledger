@@ -3,11 +3,9 @@ import { formatCents } from "../api.js";
 const INK = "#1b1f24";
 const MUTED = "#6a655c";
 const GRID = "#ddd8cb";
-const ACTUAL = "#1f4b3a";
-const PROJECTED = "#2f6f9f";
-const PLANNED = "#8e6f3e";
-const COMMITTED = "#8a1f1f";
-const FUNDED = "#72539b";
+const DEFAULT_PROJECT = "#2f6f9f";
+const APPROVED = "#7a746a";
+const FUNDED = "#aaa294";
 
 function compactMoney(cents) {
   const dollars = cents / 100;
@@ -18,7 +16,11 @@ function compactMoney(cents) {
 
 function monthLabel(value) {
   const [year, month] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" }).format(
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "2-digit",
+    timeZone: "UTC",
+  }).format(
     new Date(Date.UTC(year, month - 1, 1)),
   );
 }
@@ -40,7 +42,7 @@ function NoData({ children = "No forecast data yet." }) {
   return <p className="muted">{children}</p>;
 }
 
-export function CumulativeForecastChart({ burn }) {
+export function CumulativeForecastChart({ burn, color = DEFAULT_PROJECT }) {
   const rows = burn?.forecast_months || [];
   if (!rows.length) return <NoData />;
   const width = Math.max(720, rows.length * 54);
@@ -108,7 +110,7 @@ export function CumulativeForecastChart({ burn }) {
             x2={width - right}
             y1={y(burn.approved_ceiling_cents)}
             y2={y(burn.approved_ceiling_cents)}
-            stroke={PLANNED}
+            stroke={APPROVED}
             strokeWidth="2"
           />
           <line
@@ -123,14 +125,14 @@ export function CumulativeForecastChart({ burn }) {
           <path
             d={path(actualRows, "cumulative_actual_cents")}
             fill="none"
-            stroke={ACTUAL}
+            stroke={color}
             strokeWidth="3"
           />
           {projectedPath ? (
             <path
               d={projectedPath}
               fill="none"
-              stroke={PROJECTED}
+              stroke={color}
               strokeWidth="3"
               strokeDasharray="7 5"
             />
@@ -153,9 +155,9 @@ export function CumulativeForecastChart({ burn }) {
       </div>
       <Legend
         items={[
-          ["Actual", ACTUAL],
-          [`Projected (${burn.selected_window_days}d rate)`, PROJECTED, true],
-          ["Approved ceiling", PLANNED],
+          ["Actual", color],
+          [`Projected (${burn.selected_window_days}d rate)`, color, true],
+          ["Approved ceiling", APPROVED],
           ["Funded ceiling", FUNDED, true],
         ]}
       />
@@ -163,7 +165,7 @@ export function CumulativeForecastChart({ burn }) {
   );
 }
 
-function BarChart({ title, description, rows, series, lineValue, lineLabel }) {
+function BarChart({ title, description, rows, series, lineValue, lineLabel, color }) {
   if (!rows.length) return <NoData />;
   const width = Math.max(720, rows.length * 58);
   const height = 260;
@@ -215,6 +217,7 @@ function BarChart({ title, description, rows, series, lineValue, lineLabel }) {
                       width={barW - 2}
                       height={Math.max(1, top + innerH - y(value))}
                       fill={item.color}
+                      fillOpacity={item.opacity ?? 1}
                       rx="2"
                     >
                       <title>{`${monthLabel(row.year_month)} · ${item.label}: ${formatCents(value)}`}</title>
@@ -233,7 +236,7 @@ function BarChart({ title, description, rows, series, lineValue, lineLabel }) {
               x2={width - right}
               y1={y(lineValue)}
               y2={y(lineValue)}
-              stroke={PROJECTED}
+              stroke={color || DEFAULT_PROJECT}
               strokeWidth="2"
               strokeDasharray="6 4"
             >
@@ -245,43 +248,44 @@ function BarChart({ title, description, rows, series, lineValue, lineLabel }) {
       <Legend
         items={[
           ...series.map((item) => [item.label, item.color]),
-          ...(lineValue ? [[lineLabel, PROJECTED, true]] : []),
+          ...(lineValue ? [[lineLabel, color || DEFAULT_PROJECT, true]] : []),
         ]}
       />
     </div>
   );
 }
 
-export function MonthlyActualChart({ burn }) {
+export function MonthlyActualChart({ burn, color = DEFAULT_PROJECT }) {
   const rows = (burn?.forecast_months || []).filter((row) => row.year_month <= burn.as_of.slice(0, 7));
   return (
     <BarChart
       title="Monthly actual burn"
       description="Posted charges by work month; the dashed line is the selected trailing daily rate × 30."
       rows={rows}
-      series={[{ key: "actual_cents", label: "Actual", color: ACTUAL }]}
+      series={[{ key: "actual_cents", label: "Actual", color }]}
       lineValue={burn.daily_burn_cents * 30}
       lineLabel={`${burn.selected_window_days}-day monthly rate`}
+      color={color}
     />
   );
 }
 
-export function PlanActualChart({ burn }) {
+export function PlanActualChart({ burn, color = DEFAULT_PROJECT }) {
   return (
     <BarChart
       title="Planned labor, actuals, and commitments"
       description="Assignment-based loaded labor is a management plan. Open commitments are shown separately."
       rows={burn?.forecast_months || []}
       series={[
-        { key: "actual_cents", label: "Actual", color: ACTUAL },
-        { key: "planned_cents", label: "Planned labor", color: PLANNED },
-        { key: "commitment_cents", label: "Open commitments", color: COMMITTED },
+        { key: "actual_cents", label: "Actual", color },
+        { key: "planned_cents", label: "Planned labor", color, opacity: 0.65 },
+        { key: "commitment_cents", label: "Open commitments", color, opacity: 0.35 },
       ]}
     />
   );
 }
 
-export function FundingTimeline({ burn }) {
+export function FundingTimeline({ burn, color = DEFAULT_PROJECT }) {
   const rows = (burn?.forecast_months || []).filter((row) => row.funding_expected_cents > 0);
   return (
     <div className="forecast-chart">
@@ -293,7 +297,7 @@ export function FundingTimeline({ burn }) {
       {rows.length ? (
         <div className="funding-timeline">
           {rows.map((row) => (
-            <div key={row.year_month}>
+            <div key={row.year_month} style={{ borderColor: color }}>
               <span>{monthLabel(row.year_month)}</span>
               <strong>{formatCents(row.funding_expected_cents)}</strong>
             </div>
@@ -306,7 +310,7 @@ export function FundingTimeline({ burn }) {
   );
 }
 
-export function BurnWindowComparison({ burn, onSelect }) {
+export function BurnWindowComparison({ burn, onSelect, color = DEFAULT_PROJECT }) {
   const windows = burn?.windows || [];
   if (!windows.length) return <NoData />;
   const max = Math.max(...windows.map((row) => row.monthly_rate_cents), 1);
@@ -326,7 +330,12 @@ export function BurnWindowComparison({ burn, onSelect }) {
           >
             <span>{row.days} days</span>
             <strong>{formatCents(row.monthly_rate_cents)}/mo</strong>
-            <i style={{ width: `${(row.monthly_rate_cents / max) * 100}%` }} />
+            <i
+              style={{
+                width: `${(row.monthly_rate_cents / max) * 100}%`,
+                background: color,
+              }}
+            />
           </button>
         ))}
       </div>
@@ -334,19 +343,28 @@ export function BurnWindowComparison({ burn, onSelect }) {
   );
 }
 
-export default function BurnForecast({ burn, asOf, onAsOfChange, onWindowSelect }) {
+export default function BurnForecast({
+  burn,
+  asOf,
+  onAsOfChange,
+  onWindowSelect,
+  color = DEFAULT_PROJECT,
+  showDateControl = true,
+}) {
   if (!burn) return null;
   return (
     <>
       <div className="forecast-toolbar">
-        <div>
-          <label>Forecast as of</label>
-          <input
-            type="date"
-            value={asOf}
-            onChange={(event) => onAsOfChange(event.target.value)}
-          />
-        </div>
+        {showDateControl ? (
+          <div>
+            <label>Forecast as of</label>
+            <input
+              type="date"
+              value={asOf}
+              onChange={(event) => onAsOfChange(event.target.value)}
+            />
+          </div>
+        ) : null}
         <div className="forecast-kpis">
           <div>
             <span>Daily burn</span>
@@ -367,11 +385,11 @@ export default function BurnForecast({ burn, asOf, onAsOfChange, onWindowSelect 
         </div>
       </div>
       <div className="forecast-grid">
-        <CumulativeForecastChart burn={burn} />
-        <MonthlyActualChart burn={burn} />
-        <PlanActualChart burn={burn} />
-        <FundingTimeline burn={burn} />
-        <BurnWindowComparison burn={burn} onSelect={onWindowSelect} />
+        <CumulativeForecastChart burn={burn} color={color} />
+        <MonthlyActualChart burn={burn} color={color} />
+        <PlanActualChart burn={burn} color={color} />
+        <FundingTimeline burn={burn} color={color} />
+        <BurnWindowComparison burn={burn} onSelect={onWindowSelect} color={color} />
       </div>
     </>
   );
