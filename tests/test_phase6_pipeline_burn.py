@@ -143,6 +143,8 @@ def test_monthly_burn_and_eac(client: TestClient) -> None:
     assert january["cumulative_actual_cents"] == 6_000
     assert january["projected_cumulative_cents"] == 6_000 + 600 * 21
     assert january["planned_cents"] > 0
+    assert january["actual_by_category"] == {"equipment": 6_000}
+    assert january["planned_by_category"] == {"labor": january["planned_cents"]}
 
     funding = client.post(
         f"/awards/{award['award_id']}/funding-expectations",
@@ -176,6 +178,7 @@ def test_monthly_burn_and_eac(client: TestClient) -> None:
     september = next(row for row in later_body["forecast_months"] if row["year_month"] == "2026-09")
     assert september["funding_expected_cents"] == 500_000
     assert september["commitment_cents"] == 250_000
+    assert september["commitment_by_category"] == {"equipment": 250_000}
     assert (
         client.get(
             f"/awards/{award['award_id']}/burn",

@@ -139,8 +139,6 @@ export default function Award() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [taskForm, setTaskForm] = useState({ short_code: "", title: "" });
-  const [commitments, setCommitments] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [compliance, setCompliance] = useState([]);
   const [scheduleItems, setScheduleItems] = useState([]);
@@ -179,22 +177,6 @@ export default function Award() {
     task_id: "",
     hours_per_month: "",
     effective_from: `${todayIso().slice(0, 7)}-01`,
-  });
-  const [purchaseForm, setPurchaseForm] = useState({
-    category_code: "equipment",
-    dollars: "",
-    description: "",
-    vendor: "",
-    effective_date: todayIso(),
-    expected_date: "",
-  });
-  const [travelForm, setTravelForm] = useState({
-    dollars: "",
-    description: "",
-    person_id: "",
-    effective_date: todayIso(),
-    trip_end: "",
-    expected_date: "",
   });
   const [statuses, setStatuses] = useState([]);
   const [agencies, setAgencies] = useState([]);
@@ -245,13 +227,11 @@ export default function Award() {
   });
 
   async function load() {
-    const [detail, taskList, assignList, personList, commitmentList, lookups, fundingList] =
-      await Promise.all([
+    const [detail, taskList, assignList, personList, lookups, fundingList] = await Promise.all([
         api(`/awards/${id}`),
         api(`/awards/${id}/tasks`),
         api("/assignments", { query: { award_id: id } }),
         api("/people"),
-        api(`/awards/${id}/commitments`),
         api("/lookups"),
         api(`/awards/${id}/funding-expectations`),
       ]);
@@ -263,8 +243,6 @@ export default function Award() {
     setTasks(taskList);
     setAssignments(assignList);
     setPeople(personList);
-    setCommitments(commitmentList);
-    setCategories(lookups.budget_categories || []);
     setDocumentKinds(lookups.document_kinds || []);
     setComplianceKinds(lookups.compliance_kinds || []);
     setPipelineKinds(lookups.pipeline_kinds || []);
@@ -676,31 +654,6 @@ export default function Award() {
     }
   }
 
-  async function addPurchase(event) {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    try {
-      await api("/purchases", {
-        method: "POST",
-        body: {
-          award_id: Number(id),
-          category_code: purchaseForm.category_code,
-          amount_cents: dollarsToCents(purchaseForm.dollars),
-          description: purchaseForm.description || null,
-          vendor: purchaseForm.vendor || null,
-          effective_date: purchaseForm.effective_date,
-          expected_date: purchaseForm.expected_date || null,
-        },
-      });
-      setPurchaseForm((current) => ({ ...current, dollars: "", description: "", vendor: "" }));
-      setNotice("Purchase committed.");
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
   async function addFunding(event) {
     event.preventDefault();
     setError("");
@@ -733,19 +686,6 @@ export default function Award() {
     }
   }
 
-  async function saveExpectedDate(commitmentId, expectedDate) {
-    setError("");
-    try {
-      await api(`/commitments/${commitmentId}`, {
-        method: "PATCH",
-        body: { expected_date: expectedDate || null },
-      });
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
   async function linkComplianceDocument(itemId, documentId) {
     setError("");
     try {
@@ -753,71 +693,6 @@ export default function Award() {
         method: "PATCH",
         body: { document_id: documentId ? Number(documentId) : null },
       });
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function addTravel(event) {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    try {
-      const body = {
-        award_id: Number(id),
-        amount_cents: dollarsToCents(travelForm.dollars),
-        description: travelForm.description || null,
-        effective_date: travelForm.effective_date,
-      };
-      if (travelForm.person_id) {
-        body.person_id = Number(travelForm.person_id);
-      }
-      if (travelForm.trip_end) {
-        body.trip_end = travelForm.trip_end;
-      }
-      if (travelForm.expected_date) {
-        body.expected_date = travelForm.expected_date;
-      }
-      await api("/travel", { method: "POST", body });
-      setTravelForm((current) => ({ ...current, dollars: "", description: "", trip_end: "" }));
-      setNotice("Travel committed.");
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function postCommitment(commitmentId) {
-    setError("");
-    setNotice("");
-    try {
-      await api(`/commitments/${commitmentId}/post`, { method: "POST" });
-      setNotice("Commitment posted.");
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function cancelCommitment(commitmentId) {
-    setError("");
-    setNotice("");
-    try {
-      await api(`/commitments/${commitmentId}/cancel`, { method: "POST" });
-      setNotice("Commitment cancelled.");
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function removeCommitment(commitmentId) {
-    setError("");
-    setNotice("");
-    try {
-      await api(`/commitments/${commitmentId}`, { method: "DELETE" });
-      setNotice("Commitment removed.");
       await load();
     } catch (err) {
       setError(err.message);
@@ -1982,222 +1857,6 @@ export default function Award() {
             <button type="submit">Add assignment</button>
           </p>
         </form>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Purchases">
-        <form onSubmit={addPurchase}>
-          <div className="row">
-            <div>
-              <label>Category</label>
-              <select
-                value={purchaseForm.category_code}
-                onChange={(event) =>
-                  setPurchaseForm((current) => ({ ...current, category_code: event.target.value }))
-                }
-              >
-                {categories.map((row) => (
-                  <option key={row.category_code} value={row.category_code}>
-                    {row.category_code}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label>Amount (USD)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={purchaseForm.dollars}
-                onChange={(event) =>
-                  setPurchaseForm((current) => ({ ...current, dollars: event.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>Vendor</label>
-              <input
-                value={purchaseForm.vendor}
-                onChange={(event) =>
-                  setPurchaseForm((current) => ({ ...current, vendor: event.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>Date</label>
-              <input
-                type="date"
-                value={purchaseForm.effective_date}
-                onChange={(event) =>
-                  setPurchaseForm((current) => ({ ...current, effective_date: event.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>Expected invoice</label>
-              <input
-                type="date"
-                value={purchaseForm.expected_date}
-                onChange={(event) =>
-                  setPurchaseForm((current) => ({ ...current, expected_date: event.target.value }))
-                }
-              />
-            </div>
-          </div>
-          <label>Description</label>
-          <input
-            value={purchaseForm.description}
-            onChange={(event) =>
-              setPurchaseForm((current) => ({ ...current, description: event.target.value }))
-            }
-          />
-          <p>
-            <button type="submit">Commit purchase</button>
-          </p>
-        </form>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Travel">
-        <form onSubmit={addTravel}>
-          <div className="row">
-            <div>
-              <label>Amount (USD)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={travelForm.dollars}
-                onChange={(event) =>
-                  setTravelForm((current) => ({ ...current, dollars: event.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>Person (optional)</label>
-              <select
-                value={travelForm.person_id}
-                onChange={(event) =>
-                  setTravelForm((current) => ({ ...current, person_id: event.target.value }))
-                }
-              >
-                <option value="">None</option>
-                {people.map((person) => (
-                  <option key={person.person_id} value={person.person_id}>
-                    {person.display_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label>Start</label>
-              <input
-                type="date"
-                value={travelForm.effective_date}
-                onChange={(event) =>
-                  setTravelForm((current) => ({ ...current, effective_date: event.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>End</label>
-              <input
-                type="date"
-                value={travelForm.trip_end}
-                onChange={(event) =>
-                  setTravelForm((current) => ({ ...current, trip_end: event.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>Expected invoice</label>
-              <input
-                type="date"
-                value={travelForm.expected_date}
-                onChange={(event) =>
-                  setTravelForm((current) => ({ ...current, expected_date: event.target.value }))
-                }
-              />
-            </div>
-          </div>
-          <label>Description</label>
-          <input
-            value={travelForm.description}
-            onChange={(event) =>
-              setTravelForm((current) => ({ ...current, description: event.target.value }))
-            }
-          />
-          <p>
-            <button type="submit">Commit travel</button>
-          </p>
-        </form>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Commitments">
-        <table>
-          <thead>
-            <tr>
-              <th>Kind</th>
-              <th>Status</th>
-              <th>Category</th>
-              <th>Amount</th>
-              <th>Expected</th>
-              <th>Description</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {commitments.map((row) => (
-              <tr key={row.commitment_id}>
-                <td>{row.kind}</td>
-                <td>
-                  <span className="status">{row.status_code}</span>
-                </td>
-                <td>{row.category_code}</td>
-                <td>{formatCents(row.amount_cents)}</td>
-                <td>
-                  {row.status_code === "open" ? (
-                    <input
-                      type="date"
-                      defaultValue={row.expected_date || ""}
-                      onBlur={(event) => {
-                        const next = event.target.value || "";
-                        if (next !== (row.expected_date || "")) {
-                          saveExpectedDate(row.commitment_id, next);
-                        }
-                      }}
-                    />
-                  ) : (
-                    row.expected_date || "—"
-                  )}
-                </td>
-                <td>{row.description || row.vendor || "—"}</td>
-                <td className="actions">
-                  {row.status_code === "open" ? (
-                    <>
-                      <button type="button" onClick={() => postCommitment(row.commitment_id)}>
-                        Post
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => cancelCommitment(row.commitment_id)}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => removeCommitment(row.commitment_id)}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </CollapsibleSection>
 
       <AwardSchedule

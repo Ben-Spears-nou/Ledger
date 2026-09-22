@@ -351,9 +351,21 @@ def replace_week_lines(
     session: Session,
     period: TimesheetPeriod,
     lines: list[dict[str, object]],
+    *,
+    actor_id: int | None = None,
+    allow_submitted: bool = False,
 ) -> TimesheetPeriod:
-    """Replace all lines on a draft/returned week. No hour-total rules (D10)."""
-    if period.status_code not in {"draft", "returned"}:
+    """Replace all lines on a draft/returned week. No hour-total rules (D10).
+
+    Admins entering hours for someone else may also replace a submitted week;
+    approved weeks still require unapprove first.
+    """
+    allowed = {"draft", "returned"}
+    if allow_submitted:
+        allowed.add("submitted")
+    if period.status_code == "approved":
+        raise TimeError("approved weeks must be unapproved before editing")
+    if period.status_code not in allowed:
         raise TimeError("only draft or returned weeks can be edited")
     existing = session.scalars(
         select(TimesheetLine).where(TimesheetLine.timesheet_period_id == period.timesheet_period_id)
@@ -379,6 +391,21 @@ def replace_week_lines(
             )
         )
     session.flush()
+    actor = session.get(UserAccount, actor_id) if actor_id is not None else None
+    if actor is not None and actor.person_id != period.person_id:
+        record_event(
+            session,
+            action="week_update",
+            entity_type="timesheet_period",
+            entity_id=period.timesheet_period_id,
+            actor_user_id=actor_id,
+            detail={
+                "person_id": period.person_id,
+                "week_start": period.week_start,
+                "proxy": True,
+                "status_code": period.status_code,
+            },
+        )
     return period
 
 

@@ -454,6 +454,87 @@ def test_pto_does_not_consume_award_remaining(client: TestClient) -> None:
     assert remaining["actual_cents"] == 0
 
 
+def test_admin_can_enter_hours_for_another_person(client: TestClient) -> None:
+    admin = login(client)
+    award = _award(
+        client, admin, short_code="A1", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
+    )
+    alex, person_id = _employee(client, admin)
+    path = f"/people/{person_id}/week"
+    created = client.put(
+        path,
+        json={
+            "week_start": "2026-03-02",
+            "lines": [{"work_date": "2026-03-02", "hours": 3, "award_id": award["award_id"]}],
+        },
+        headers=auth_header(admin),
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["person_id"] == person_id
+    assert created.json()["hours_total"] == 3
+    assert "amount_cents" not in created.json()
+    mine = client.get("/me/week", params={"week_start": "2026-03-02"}, headers=auth_header(alex))
+    assert mine.status_code == 200
+    assert mine.json()["hours_total"] == 3
+
+    denied = client.get(path, params={"week_start": "2026-03-02"}, headers=auth_header(alex))
+    assert denied.status_code == 403
+
+    submitted = client.post(
+        f"{path}/submit",
+        params={"week_start": "2026-03-02"},
+        headers=auth_header(admin),
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["status_code"] == "submitted"
+
+    employee_edit = client.put(
+        "/me/week",
+        json={
+            "week_start": "2026-03-02",
+            "lines": [{"work_date": "2026-03-03", "hours": 1, "award_id": award["award_id"]}],
+        },
+        headers=auth_header(alex),
+    )
+    assert employee_edit.status_code == 400
+
+    proxy_edit = client.put(
+        path,
+        json={
+            "week_start": "2026-03-02",
+            "lines": [{"work_date": "2026-03-04", "hours": 5, "award_id": award["award_id"]}],
+        },
+        headers=auth_header(admin),
+    )
+    assert proxy_edit.status_code == 200, proxy_edit.text
+    assert proxy_edit.json()["status_code"] == "submitted"
+    assert proxy_edit.json()["hours_total"] == 5
+
+    events = client.get(
+        "/admin/audit",
+        params={"action": "week_update"},
+        headers=auth_header(admin),
+    )
+    assert events.status_code == 200, events.text
+    assert events.json()
+    assert events.json()[0]["detail"]["person_id"] == person_id
+    assert events.json()[0]["detail"]["proxy"] is True
+
+    period_id = proxy_edit.json()["timesheet_period_id"]
+    approved = client.post(f"/approvals/{period_id}/approve", headers=auth_header(admin))
+    assert approved.status_code == 200, approved.text
+    blocked = client.put(
+        path,
+        json={
+            "week_start": "2026-03-02",
+            "lines": [{"work_date": "2026-03-05", "hours": 1, "award_id": award["award_id"]}],
+        },
+        headers=auth_header(admin),
+    )
+    assert blocked.status_code == 400
+    assert "unapproved" in blocked.json()["detail"]
+
+
 def test_salary_derives_hourly_base(client: TestClient) -> None:
     admin = login(client)
     created = client.post(

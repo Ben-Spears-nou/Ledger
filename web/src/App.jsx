@@ -7,11 +7,11 @@ import Audit from "./pages/Audit.jsx";
 import Award from "./pages/Award.jsx";
 import AwardNew from "./pages/AwardNew.jsx";
 import Compliance from "./pages/Compliance.jsx";
+import Expenses from "./pages/Expenses.jsx";
 import Forecast from "./pages/Forecast.jsx";
 import Gantt from "./pages/Gantt.jsx";
 import Help from "./pages/Help.jsx";
 import Home from "./pages/Home.jsx";
-import Instruments from "./pages/Instruments.jsx";
 import Login from "./pages/Login.jsx";
 import MyWeek from "./pages/MyWeek.jsx";
 import Password from "./pages/Password.jsx";
@@ -54,7 +54,7 @@ const NAV_GROUPS = [
       { to: "/portfolio", text: "Awards", admin: true },
       { to: "/staffing", text: "Staffing", admin: true },
       { to: "/people", text: "People", admin: true },
-      { to: "/instruments", text: "Instruments", admin: true },
+      { to: "/expenses", text: "Expenses", admin: true },
     ],
   },
   {
@@ -240,15 +240,16 @@ export default function App() {
         }
       />
       <Route
-        path="/instruments"
+        path="/expenses"
         element={
           <RequireAdmin>
             <Shell>
-              <Instruments />
+              <Expenses />
             </Shell>
           </RequireAdmin>
         }
       />
+      <Route path="/instruments" element={<Navigate to="/expenses" replace />} />
       <Route
         path="/compliance"
         element={

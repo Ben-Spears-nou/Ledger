@@ -117,6 +117,12 @@ their own (sole-approver bootstrap).
 `/approvals` is an admin-only queue. Employees see Submitted / Returned /
 Approved on their own weeks only. Bounce = comment + back to draft.
 
+Admin may enter hours for any person (`GET/PUT /people/{id}/week`,
+`POST .../submit`) so vacation or last-minute meetings do not require the
+employee’s login. Proxy save of a **submitted** week keeps it submitted.
+Approved weeks still need unapprove before recoding (D5). Employees 403
+on another person’s week. `/me/week` remains hours-only (no dollars).
+
 ---
 
 ## D10 — Weeks are unconstrained
@@ -234,7 +240,8 @@ Vite on `:5173` is local development. Teammates use D28 (one origin).
 
 My week renders award + hours (and, in Phase 3, optional task). Unknown
 line fields stay ignored so later phases remain additive. Phase 4 may add
-purchases/travel on `/awards/:id` and `/instruments`. Phase 5 may add
+purchases, travel, and cross-award splits on the consolidated `/expenses`
+register (the internal split API remains `/instruments`). Phase 5 may add
 documents on `/awards/:id` and a compliance calendar. Phase 6 may add
 pipeline nodes and burn on `/awards/:id` and an alerts list. Phase 7 may
 add `/audit` and a charges CSV. Phase 8 may add `/awards/new`, person and
@@ -402,7 +409,9 @@ A purchase, travel booking, or instrument share is **committed** while
 Posting writes one `charge` (`source` = `purchase` | `travel` |
 `instrument`) for the same cents and category, then sets the commitment
 `posted`. Cancel is only for `open` rows. Posted money is not edited in
-place (D5).
+place (D5). Deleting a posted expense inserts a reversing charge, then
+removes the commitment row so a mistaken entry does not linger. Shared
+splits delete the whole instrument the same way.
 
 Proposed table:
 
@@ -560,13 +569,16 @@ As-of a date (default today):
 
 The dedicated admin `/forecast` chart defaults to all awards, with a
 stable color per award, and can filter to one award shown in one
-consistent project color. It displays cumulative actual and projected
-burn, monthly actuals, assignment-based loaded labor plan, open
-commitments by expected/effective month, expected funding increments,
-and financial runway versus days to PoP end. A single-award view also
+consistent project color for project-level runway and cumulative lines.
+It displays cumulative actual and projected burn, monthly actuals,
+assignment-based loaded labor plan, open commitments by expected/effective
+month, expected funding increments, and financial runway versus days to
+PoP end. Monthly expense-mix and plan/actual views use stable category
+colors (labor green, travel blue, ODC orange, equipment purple,
+subcontracts red, indirect gray, and fee gold). A single-award view also
 shows approved and funded ceilings. Plans, commitments, and expected
-funding remain separate series: none silently changes actuals or
-remaining. These representations do not live on award detail pages.
+funding remain separate series: none silently changes actuals or remaining.
+These representations do not live on award detail pages.
 
 This is management projection, not EVM (no BCWS/SPI/CPI). Assignment
 costs use the dated rate stack and assignment overlap in each calendar
@@ -766,22 +778,23 @@ priced or posted money (D5). A **typo** is not history.
 
 - **Unused:** no posted `charge` snapshots this row (`person_rate_id` /
   `policy_id`). Assignments and capacity never post. Open or cancelled
-  purchase/travel commitments (not posted, not an instrument share), open
-  compliance, unlinked documents, and unposted instruments are unused.
-  `DELETE` is 204. If this row had closed a previous open dated row,
-  reopen that predecessor (`effective_to` repaired to abut the next
-  remaining row, or null). Cancel remains for a real purchase that will
-  not happen; Delete removes a typo so it does not linger as cancelled.
+  purchase/travel commitments (including posted mistakes after a reversing
+  charge), open compliance, unlinked documents, and instruments (including
+  posted splits after reversing each share) are unused. `DELETE` is 204.
+  If this row had closed a previous open dated row, reopen that predecessor
+  (`effective_to` repaired to abut the next remaining row, or null). Cancel
+  remains for a real purchase that will not happen; Delete removes a typo
+  so it does not linger as cancelled.
 - **End:** `PATCH` `effective_to` (and assignment hours) on a plan row
   that should stop. Prefer End when the fact was real; Delete when it was
   a mistake.
 - **Consumed:** a charge used this rate or policy, a timesheet used this
-  task, a commitment on the instrument is posted, a purchase/travel row
-  is posted, or the person has a timesheet/charge/audit-as-actor. **409**.
+  task, or the person has a timesheet/charge/audit-as-actor. **409**.
   The UI still shows Delete on the row and reports that error. Correction
   is a new dated row, deactivate, or close — not an in-place rewrite.
-  Award mods stay append-only (record a correcting mod). Posted charges
-  are not reversed in this phase. Audit rows are never deleted (D19).
+  Award mods stay append-only (record a correcting mod). Posted expense
+  charges are reversed, then the commitment is deleted (D5, D25). Audit
+  rows are never deleted (D19).
 
 `PATCH /people/{id}` may set `display_name`, `email`, `hire_date`,
 `term_date`, and `labor_category` without a login. Role/active still

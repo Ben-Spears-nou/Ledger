@@ -249,11 +249,21 @@ def create_travel(session: Session, payload: TravelIn, *, actor_id: int | None) 
     )
 
 
-def list_commitments(session: Session, award_id: int | None = None) -> list[Commitment]:
+def list_commitments(
+    session: Session,
+    award_id: int | None = None,
+    *,
+    category_code: str | None = None,
+    status_code: str | None = None,
+) -> list[Commitment]:
     """Commitments, newest last."""
     stmt = select(Commitment).order_by(Commitment.commitment_id)
     if award_id is not None:
         stmt = stmt.where(Commitment.award_id == award_id)
+    if category_code is not None:
+        stmt = stmt.where(Commitment.category_code == category_code)
+    if status_code is not None:
+        stmt = stmt.where(Commitment.status_code == status_code)
     return list(session.scalars(stmt))
 
 
@@ -327,6 +337,22 @@ def patch_commitment(
     return row
 
 
+def _void_posted_charge(session: Session, row: Commitment, *, actor_id: int | None) -> None:
+    """Reverse a posted expense charge. Does not edit the original (D5)."""
+    if row.status_code != "posted" or row.charge_id is None:
+        return
+    charge = session.get(Charge, row.charge_id)
+    if charge is None:
+        return
+    from ledger.services.time import TimeError, reverse_charge
+
+    try:
+        reverse_charge(session, charge, actor_id=actor_id)
+    except TimeError as exc:
+        if "already reversed" not in str(exc).lower():
+            raise CommitmentError(str(exc)) from exc
+
+
 def cancel_commitment(session: Session, row: Commitment, *, actor_id: int | None) -> Commitment:
     """Drop an open commitment from remaining. Does not insert a charge."""
     if row.status_code != "open":
@@ -345,14 +371,18 @@ def cancel_commitment(session: Session, row: Commitment, *, actor_id: int | None
 
 
 def delete_commitment(session: Session, row: Commitment, *, actor_id: int | None) -> None:
-    """Remove an unused purchase or travel row (D45). Posted history stays."""
-    if row.status_code == "posted":
-        raise CommitmentError("cannot delete a posted commitment")
+    """Remove a mistaken expense. Posted rows are voided with a reversing charge (D5)."""
     if row.instrument_id is not None:
-        raise CommitmentError("cannot delete an instrument share; delete the instrument instead")
+        instrument = session.get(Instrument, row.instrument_id)
+        if instrument is None:
+            raise CommitmentError("instrument not found")
+        delete_instrument(session, instrument, actor_id=actor_id)
+        return
+    _void_posted_charge(session, row, actor_id=actor_id)
     commitment_id = row.commitment_id
     award_id = row.award_id
     kind = row.kind
+    status_code = row.status_code
     session.delete(row)
     session.flush()
     record_event(
@@ -361,7 +391,7 @@ def delete_commitment(session: Session, row: Commitment, *, actor_id: int | None
         entity_type="commitment",
         entity_id=commitment_id,
         actor_user_id=actor_id,
-        detail={"award_id": award_id, "kind": kind},
+        detail={"award_id": award_id, "kind": kind, "status_code": status_code},
     )
 
 
@@ -461,12 +491,12 @@ def post_instrument(session: Session, row: Instrument, *, actor_id: int | None) 
 
 
 def delete_instrument(session: Session, row: Instrument, *, actor_id: int | None) -> None:
-    """Remove an unposted instrument and its open share commitments (D45)."""
+    """Remove a shared expense. Posted shares are voided with reversing charges (D5)."""
     children = list(
         session.scalars(select(Commitment).where(Commitment.instrument_id == row.instrument_id))
     )
-    if any(child.status_code == "posted" for child in children):
-        raise CommitmentError("cannot delete an instrument that has posted shares")
+    for child in children:
+        _void_posted_charge(session, child, actor_id=actor_id)
     instrument_id = row.instrument_id
     short = row.short_code
     for child in children:

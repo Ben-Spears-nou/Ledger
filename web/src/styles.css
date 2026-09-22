@@ -612,9 +612,33 @@ ol.steps .current {
   font-size: 0.78rem;
 }
 
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.inline-check input {
+  width: auto;
+}
+
+.expense-shared-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.65rem 0;
+  border-top: 1px solid #e6e0d4;
+}
+
 @media (max-width: 600px) {
   .window-comparison {
     grid-template-columns: 1fr;
+  }
+
+  .expense-shared-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

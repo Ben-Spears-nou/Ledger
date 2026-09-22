@@ -1,4 +1,9 @@
 import { formatCents } from "../api.js";
+import {
+  expenseCategories,
+  expenseColor,
+  expenseLabel,
+} from "../expenseColors.js";
 
 const INK = "#1b1f24";
 const MUTED = "#6a655c";
@@ -255,31 +260,138 @@ function BarChart({ title, description, rows, series, lineValue, lineLabel, colo
   );
 }
 
+function CategoryBarChart({
+  title,
+  description,
+  rows,
+  measures,
+  lineValue,
+  lineLabel,
+}) {
+  if (!rows.length) return <NoData />;
+  const categories = [
+    ...new Set(measures.flatMap((measure) => expenseCategories(rows, measure.key))),
+  ];
+  const width = Math.max(720, rows.length * 62);
+  const height = 275;
+  const left = 64;
+  const right = 14;
+  const top = 18;
+  const bottom = 45;
+  const innerW = width - left - right;
+  const innerH = height - top - bottom;
+  const totals = rows.flatMap((row) =>
+    measures.map((measure) =>
+      Object.values(row[measure.key] || {}).reduce((sum, value) => sum + value, 0),
+    ),
+  );
+  const max = Math.max(lineValue || 0, ...totals, 1);
+  const groupW = innerW / rows.length;
+  const barW = Math.min(18, Math.max(5, (groupW - 8) / measures.length));
+  const y = (value) => top + innerH - (Math.max(0, value) / max) * innerH;
+
+  return (
+    <div className="forecast-chart">
+      <h3>{title}</h3>
+      <p className="muted">{description}</p>
+      <div className="forecast-svg-scroll">
+        <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth: width }} role="img">
+          <title>{title}</title>
+          {[0, 0.5, 1].map((part) => {
+            const yy = top + innerH * (1 - part);
+            return (
+              <g key={part}>
+                <line x1={left} x2={width - right} y1={yy} y2={yy} stroke={GRID} />
+                <text x={left - 7} y={yy + 4} textAnchor="end" fontSize="10" fill={MUTED}>
+                  {compactMoney(max * part)}
+                </text>
+              </g>
+            );
+          })}
+          {rows.map((row, rowIndex) => {
+            const center = left + groupW * rowIndex + groupW / 2;
+            return (
+              <g key={row.year_month}>
+                {measures.map((measure, measureIndex) => {
+                  let stacked = 0;
+                  const xx = center + (measureIndex - (measures.length - 1) / 2) * barW;
+                  return categories.map((category) => {
+                    const value = row[measure.key]?.[category] || 0;
+                    if (!value) return null;
+                    const base = stacked;
+                    stacked += value;
+                    return (
+                      <rect
+                        key={category}
+                        x={xx - barW / 2}
+                        y={y(stacked)}
+                        width={barW - 2}
+                        height={Math.max(1, y(base) - y(stacked))}
+                        fill={expenseColor(category)}
+                        fillOpacity={measure.opacity}
+                      >
+                        <title>{`${monthLabel(row.year_month)} · ${measure.label} · ${expenseLabel(category)}: ${formatCents(value)}`}</title>
+                      </rect>
+                    );
+                  });
+                })}
+                <text x={center} y={height - 17} textAnchor="middle" fontSize="10" fill={MUTED}>
+                  {monthLabel(row.year_month)}
+                </text>
+              </g>
+            );
+          })}
+          {lineValue ? (
+            <line
+              x1={left}
+              x2={width - right}
+              y1={y(lineValue)}
+              y2={y(lineValue)}
+              stroke={DEFAULT_PROJECT}
+              strokeWidth="2"
+              strokeDasharray="6 4"
+            >
+              <title>{`${lineLabel}: ${formatCents(lineValue)}`}</title>
+            </line>
+          ) : null}
+        </svg>
+      </div>
+      <Legend items={categories.map((category) => [expenseLabel(category), expenseColor(category)])} />
+      {measures.length > 1 ? (
+        <p className="muted forecast-measures">
+          {measures
+            .map((measure) => `${measure.label}: ${Math.round(measure.opacity * 100)}% shade`)
+            .join(" · ")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function MonthlyActualChart({ burn, color = DEFAULT_PROJECT }) {
   const rows = (burn?.forecast_months || []).filter((row) => row.year_month <= burn.as_of.slice(0, 7));
   return (
-    <BarChart
+    <CategoryBarChart
       title="Monthly actual burn"
-      description="Posted charges by work month; the dashed line is the selected trailing daily rate × 30."
+      description="Posted labor and expenses by category; the dashed line is the selected trailing daily rate × 30."
       rows={rows}
-      series={[{ key: "actual_cents", label: "Actual", color }]}
+      measures={[{ key: "actual_by_category", label: "Actual", opacity: 1 }]}
       lineValue={burn.daily_burn_cents * 30}
       lineLabel={`${burn.selected_window_days}-day monthly rate`}
-      color={color}
     />
   );
 }
 
 export function PlanActualChart({ burn, color = DEFAULT_PROJECT }) {
   return (
-    <BarChart
+    <CategoryBarChart
       title="Planned labor, actuals, and commitments"
-      description="Assignment-based loaded labor is a management plan. Open commitments are shown separately."
+      description="Category colors separate labor and expenses. Assignment-based labor is a management plan."
       rows={burn?.forecast_months || []}
-      series={[
-        { key: "actual_cents", label: "Actual", color },
-        { key: "planned_cents", label: "Planned labor", color, opacity: 0.65 },
-        { key: "commitment_cents", label: "Open commitments", color, opacity: 0.35 },
+      measures={[
+        { key: "actual_by_category", label: "Actual", opacity: 1 },
+        { key: "planned_by_category", label: "Planned", opacity: 0.65 },
+        { key: "commitment_by_category", label: "Commitments", opacity: 0.35 },
       ]}
     />
   );

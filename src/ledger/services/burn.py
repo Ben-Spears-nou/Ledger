@@ -195,7 +195,24 @@ def _forecast_months(
         row.year_month: row.actual_cents
         for row in monthly_burn(session, award.award_id, as_of=as_of)
     }
+    actual_categories: dict[str, dict[str, int]] = {}
+    for row in session.scalars(
+        select(Charge).where(
+            Charge.award_id == award.award_id,
+            Charge.work_date.is_not(None),
+            Charge.work_date <= as_of.isoformat(),
+        )
+    ):
+        month_key = str(row.work_date)[:7]
+        category = (
+            "labor"
+            if row.category_code == "personnel" and row.source in {"labor", "reversal"}
+            else (row.category_code or row.source or "other")
+        )
+        month_values = actual_categories.setdefault(month_key, {})
+        month_values[category] = month_values.get(category, 0) + row.amount_cents
     commitments: dict[str, int] = {}
+    commitment_categories: dict[str, dict[str, int]] = {}
     for row in session.scalars(
         select(Commitment).where(
             Commitment.award_id == award.award_id,
@@ -203,7 +220,12 @@ def _forecast_months(
         )
     ):
         when = row.expected_date or row.effective_date
-        commitments[when[:7]] = commitments.get(when[:7], 0) + row.amount_cents
+        month_key = when[:7]
+        commitments[month_key] = commitments.get(month_key, 0) + row.amount_cents
+        month_values = commitment_categories.setdefault(month_key, {})
+        month_values[row.category_code] = (
+            month_values.get(row.category_code, 0) + row.amount_cents
+        )
     funding: dict[str, int] = {}
     for row in session.scalars(
         select(FundingExpectation).where(FundingExpectation.award_id == award.award_id)
@@ -228,15 +250,27 @@ def _forecast_months(
         else:
             through = min(month_end, pop_end)
             projected = actual_total + daily_burn_cents * max((through - as_of).days, 0)
+        planned = _planned_cents_for_month(session, award, month)
         output.append(
             ForecastMonthOut(
                 year_month=key,
                 actual_cents=actual,
                 cumulative_actual_cents=cumulative,
-                planned_cents=_planned_cents_for_month(session, award, month),
+                planned_cents=planned,
                 commitment_cents=commitments.get(key, 0),
                 funding_expected_cents=funding.get(key, 0),
                 projected_cumulative_cents=projected,
+                actual_by_category={
+                    category: cents
+                    for category, cents in actual_categories.get(key, {}).items()
+                    if cents
+                },
+                planned_by_category={"labor": planned} if planned else {},
+                commitment_by_category={
+                    category: cents
+                    for category, cents in commitment_categories.get(key, {}).items()
+                    if cents
+                },
             )
         )
     return output

@@ -56,6 +56,9 @@ class ForecastMonthOut(BaseModel):
     commitment_cents: int = 0
     funding_expected_cents: int = 0
     projected_cumulative_cents: int = 0
+    actual_by_category: dict[str, int] = Field(default_factory=dict)
+    planned_by_category: dict[str, int] = Field(default_factory=dict)
+    commitment_by_category: dict[str, int] = Field(default_factory=dict)
 
 
 class BurnWindowOut(BaseModel):

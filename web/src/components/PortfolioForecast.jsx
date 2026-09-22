@@ -1,5 +1,10 @@
 import { formatCents } from "../api.js";
 import { awardBarColors } from "../awardColors.js";
+import {
+  expenseCategories,
+  expenseColor,
+  expenseLabel,
+} from "../expenseColors.js";
 import PortfolioRunway from "./PortfolioRunway.jsx";
 
 const GRID = "#ddd8cb";
@@ -213,6 +218,113 @@ function StackedMonthlyChart({ burns, title, description, measures }) {
   );
 }
 
+function PortfolioCategoryChart({ burns }) {
+  const months = monthsFor(burns);
+  if (!months.length) return null;
+  const fields = [
+    { key: "actual_by_category", label: "Actual", opacity: 1 },
+    { key: "planned_by_category", label: "Planned", opacity: 0.65 },
+    { key: "commitment_by_category", label: "Commitments", opacity: 0.35 },
+  ];
+  const allRows = burns.flatMap((burn) => burn.forecast_months);
+  const categories = [
+    ...new Set(fields.flatMap((field) => expenseCategories(allRows, field.key))),
+  ];
+  const width = Math.max(720, months.length * 68);
+  const height = 275;
+  const left = 64;
+  const right = 14;
+  const top = 18;
+  const bottom = 45;
+  const innerW = width - left - right;
+  const innerH = height - top - bottom;
+  const total = (month, field, category) =>
+    burns.reduce(
+      (sum, burn) => sum + (monthRow(burn, month)?.[field]?.[category] || 0),
+      0,
+    );
+  const max = Math.max(
+    ...months.flatMap((month) =>
+      fields.map((field) =>
+        categories.reduce((sum, category) => sum + total(month, field.key, category), 0),
+      ),
+    ),
+    1,
+  );
+  const groupW = innerW / months.length;
+  const barW = Math.min(18, Math.max(5, (groupW - 8) / fields.length));
+  const y = (value) => top + innerH - (Math.max(0, value) / max) * innerH;
+
+  return (
+    <div className="forecast-chart">
+      <h3>Portfolio plan and expense mix</h3>
+      <p className="muted">
+        Portfolio totals use category colors; choose one award above for an award-level category stack.
+      </p>
+      <div className="forecast-svg-scroll">
+        <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth: width }} role="img">
+          <title>Portfolio plan and expense mix by category</title>
+          {[0, 0.5, 1].map((part) => {
+            const yy = top + innerH * (1 - part);
+            return (
+              <g key={part}>
+                <line x1={left} x2={width - right} y1={yy} y2={yy} stroke={GRID} />
+                <text x={left - 7} y={yy + 4} textAnchor="end" fontSize="10" fill={MUTED}>
+                  {compactMoney(max * part)}
+                </text>
+              </g>
+            );
+          })}
+          {months.map((month, monthIndex) => {
+            const center = left + groupW * monthIndex + groupW / 2;
+            return (
+              <g key={month}>
+                {fields.map((field, fieldIndex) => {
+                  let stacked = 0;
+                  const xx = center + (fieldIndex - 1) * barW;
+                  return categories.map((category) => {
+                    const value = total(month, field.key, category);
+                    if (!value) return null;
+                    const base = stacked;
+                    stacked += value;
+                    return (
+                      <rect
+                        key={category}
+                        x={xx - barW / 2}
+                        y={y(stacked)}
+                        width={barW - 2}
+                        height={Math.max(1, y(base) - y(stacked))}
+                        fill={expenseColor(category)}
+                        fillOpacity={field.opacity}
+                      >
+                        <title>{`${monthLabel(month)} · ${field.label} · ${expenseLabel(category)}: ${formatCents(value)}`}</title>
+                      </rect>
+                    );
+                  });
+                })}
+                <text x={center} y={height - 17} textAnchor="middle" fontSize="10" fill={MUTED}>
+                  {monthLabel(month)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="forecast-legend">
+        {categories.map((category) => (
+          <span key={category}>
+            <i style={{ background: expenseColor(category) }} />
+            {expenseLabel(category)}
+          </span>
+        ))}
+      </div>
+      <p className="muted forecast-measures">
+        Actual: 100% shade · Planned: 65% shade · Commitments: 35% shade
+      </p>
+    </div>
+  );
+}
+
 function PortfolioFunding({ burns }) {
   const events = burns
     .flatMap((burn, index) =>
@@ -283,16 +395,7 @@ export default function PortfolioForecast({ burns }) {
         description="Posted charges stacked by award."
         measures={[{ key: "actual_cents", label: "Actual", opacity: 1 }]}
       />
-      <StackedMonthlyChart
-        burns={burns}
-        title="Planned labor, actuals, and commitments"
-        description="Three monthly bars, each stacked by award color."
-        measures={[
-          { key: "actual_cents", label: "Actual", opacity: 1 },
-          { key: "planned_cents", label: "Planned", opacity: 0.65 },
-          { key: "commitment_cents", label: "Commitments", opacity: 0.35 },
-        ]}
-      />
+      <PortfolioCategoryChart burns={burns} />
       <PortfolioFunding burns={burns} />
       <PortfolioWindows burns={burns} />
     </div>

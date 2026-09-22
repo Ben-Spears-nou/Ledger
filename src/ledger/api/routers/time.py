@@ -155,6 +155,7 @@ def put_my_week(
             session,
             period,
             [line.model_dump() for line in payload.lines],
+            actor_id=user.user_account_id,
         )
     except TimeError as exc:
         raise _http(exc) from exc
@@ -172,6 +173,69 @@ def submit_my_week(
     period = get_or_create_period(session, user.person_id, start)
     try:
         submit_period(session, period, actor_id=user.user_account_id)
+    except TimeError as exc:
+        raise _http(exc) from exc
+    return _employee_week(session, period)
+
+
+def _require_person(session: Session, person_id: int) -> Person:
+    person = session.get(Person, person_id)
+    if person is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "person not found")
+    return person
+
+
+@rates_router.get("/people/{person_id}/week", response_model=WeekOut)
+def get_person_week(
+    person_id: int,
+    week_start: str | None = None,
+    session: Session = Depends(get_db),
+    _admin: UserAccount = Depends(require_admin),
+) -> WeekOut:
+    """Admin My-week view for any person (hours only)."""
+    _require_person(session, person_id)
+    start = week_start or datetime.now(UTC).date().isoformat()
+    period = get_or_create_period(session, person_id, start, prefill=True)
+    return _employee_week(session, period)
+
+
+@rates_router.put("/people/{person_id}/week", response_model=WeekOut)
+def put_person_week(
+    person_id: int,
+    payload: WeekPut,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WeekOut:
+    """Replace another person's draft, returned, or submitted week."""
+    _require_person(session, person_id)
+    start = payload.week_start or datetime.now(UTC).date().isoformat()
+    period = get_or_create_period(session, person_id, start)
+    try:
+        replace_week_lines(
+            session,
+            period,
+            [line.model_dump() for line in payload.lines],
+            actor_id=admin.user_account_id,
+            allow_submitted=True,
+        )
+    except TimeError as exc:
+        raise _http(exc) from exc
+    return _employee_week(session, period)
+
+
+@rates_router.post("/people/{person_id}/week/submit", response_model=WeekOut)
+def submit_person_week(
+    person_id: int,
+    week_start: str | None = None,
+    session: Session = Depends(get_db),
+    admin: UserAccount = Depends(require_admin),
+) -> WeekOut:
+    """Submit another person's week to the approval queue."""
+    _require_person(session, person_id)
+    start = week_start or datetime.now(UTC).date().isoformat()
+    period = get_or_create_period(session, person_id, start)
+    try:
+        submit_period(session, period, actor_id=admin.user_account_id)
     except TimeError as exc:
         raise _http(exc) from exc
     return _employee_week(session, period)

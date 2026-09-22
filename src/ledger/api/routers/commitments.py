@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ledger.api.deps import get_db, require_admin
@@ -89,6 +89,26 @@ def get_award_commitments(
     return [serialize_commitment(row) for row in list_commitments(session, award_id)]
 
 
+@commitments_router.get("", response_model=list[CommitmentOut])
+def get_commitments(
+    award_id: int | None = Query(default=None),
+    category_code: str | None = Query(default=None),
+    status_code: str | None = Query(default=None),
+    session: Session = Depends(get_db),
+    _admin: UserAccount = Depends(require_admin),
+) -> list[CommitmentOut]:
+    """List expenses/commitments across awards with optional filters."""
+    return [
+        serialize_commitment(row)
+        for row in list_commitments(
+            session,
+            award_id,
+            category_code=category_code,
+            status_code=status_code,
+        )
+    ]
+
+
 @commitments_router.post("/{commitment_id}/post", response_model=CommitmentOut)
 def post_one_commitment(
     commitment_id: int,
@@ -150,7 +170,7 @@ def remove_commitment(
     session: Session = Depends(get_db),
     admin: UserAccount = Depends(require_admin),
 ) -> None:
-    """Delete an unused purchase or travel commitment (D45)."""
+    """Delete a mistaken expense. Posted rows are reversed, not rewritten."""
     row = session.get(Commitment, commitment_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "commitment not found")

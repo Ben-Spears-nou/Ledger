@@ -368,8 +368,13 @@ def test_open_purchase_delete_clears_remaining(client: TestClient) -> None:
     )
     assert posted.status_code == 201, posted.text
     client.post(f"/commitments/{posted.json()['commitment_id']}/post", headers=headers)
-    blocked = client.delete(f"/commitments/{posted.json()['commitment_id']}", headers=headers)
-    assert blocked.status_code == 409, blocked.text
+    after_post = _remaining(client, admin, award["award_id"])
+    assert after_post["actual_cents"] == 5_000
+    voided = client.delete(f"/commitments/{posted.json()['commitment_id']}", headers=headers)
+    assert voided.status_code == 204, voided.text
+    restored = _remaining(client, admin, award["award_id"])
+    assert restored["actual_cents"] == 0
+    assert restored["committed_cents"] == 0
 
     other = _award(
         client, admin, short_code="P11BUY2", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
@@ -391,8 +396,10 @@ def test_open_purchase_delete_clears_remaining(client: TestClient) -> None:
     )
     assert split.status_code == 201, split.text
     share_id = split.json()["commitments"][0]["commitment_id"]
-    share_blocked = client.delete(f"/commitments/{share_id}", headers=headers)
-    assert share_blocked.status_code == 409, share_blocked.text
+    share_deleted = client.delete(f"/commitments/{share_id}", headers=headers)
+    assert share_deleted.status_code == 204, share_deleted.text
+    assert _remaining(client, admin, award["award_id"])["committed_cents"] == 0
+    assert _remaining(client, admin, other["award_id"])["committed_cents"] == 0
 
 
 def test_unposted_instrument_delete_clears_remaining(client: TestClient) -> None:
@@ -445,8 +452,11 @@ def test_unposted_instrument_delete_clears_remaining(client: TestClient) -> None
     )
     assert posted.status_code == 201, posted.text
     client.post(f"/instruments/{posted.json()['instrument_id']}/post", headers=headers)
-    blocked = client.delete(f"/instruments/{posted.json()['instrument_id']}", headers=headers)
-    assert blocked.status_code == 409, blocked.text
+    assert _remaining(client, admin, left["award_id"])["actual_cents"] == 2_500
+    voided = client.delete(f"/instruments/{posted.json()['instrument_id']}", headers=headers)
+    assert voided.status_code == 204, voided.text
+    assert _remaining(client, admin, left["award_id"])["actual_cents"] == 0
+    assert _remaining(client, admin, right["award_id"])["actual_cents"] == 0
 
 
 def test_employee_forbidden_and_d18_unchanged(client: TestClient) -> None:

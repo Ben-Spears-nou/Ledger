@@ -53,6 +53,19 @@ def test_open_purchase_reduces_approved_not_actual_post_swaps_commit(client: Tes
     assert created.status_code == 201, created.text
     assert created.json()["status_code"] == "open"
     assert created.json()["kind"] == "purchase"
+    listed = client.get(
+        "/commitments",
+        params={
+            "award_id": award["award_id"],
+            "category_code": "equipment",
+            "status_code": "open",
+        },
+        headers=auth_header(admin),
+    )
+    assert listed.status_code == 200, listed.text
+    assert [row["commitment_id"] for row in listed.json()] == [
+        created.json()["commitment_id"]
+    ]
 
     opened = _remaining(client, admin, award["award_id"])
     assert opened["committed_cents"] == 10_000

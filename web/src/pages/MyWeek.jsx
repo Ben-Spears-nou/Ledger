@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { addDaysIso, api, mondayOnOrBefore, newLineKey, todayIso } from "../api.js";
+import {
+  addDaysIso,
+  api,
+  getUser,
+  mondayOnOrBefore,
+  newLineKey,
+  todayIso,
+} from "../api.js";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -63,7 +70,12 @@ function roundHours(value) {
 }
 
 export default function MyWeek() {
+  const me = getUser();
+  const isAdmin = me?.role_code === "admin";
+  const myPersonId = me?.person_id != null ? String(me.person_id) : "";
   const [weekStart, setWeekStart] = useState(() => mondayOnOrBefore(todayIso()));
+  const [personId, setPersonId] = useState(myPersonId);
+  const [people, setPeople] = useState([]);
   const [status, setStatus] = useState("draft");
   const [returnComment, setReturnComment] = useState("");
   const [rows, setRows] = useState(() => [emptyRow()]);
@@ -73,7 +85,15 @@ export default function MyWeek() {
   const [planned, setPlanned] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const locked = status === "submitted" || status === "approved";
+  const proxy = isAdmin && personId && personId !== myPersonId;
+  const locked = status === "approved" || (!proxy && status === "submitted");
+
+  function weekPath(id) {
+    if (isAdmin && id && id !== myPersonId) {
+      return `/people/${id}/week`;
+    }
+    return "/me/week";
+  }
 
   const dayDates = useMemo(
     () => DAY_LABELS.map((label, index) => ({ label, date: addDaysIso(weekStart, index) })),
@@ -99,15 +119,19 @@ export default function MyWeek() {
     [rows],
   );
 
-  async function load(start) {
+  async function load(start, forPersonId = personId) {
     setError("");
     const monday = mondayOnOrBefore(start);
-    const [week, picker, lookups, taskList] = await Promise.all([
-      api("/me/week", { query: { week_start: monday } }),
+    const requests = [
+      api(weekPath(forPersonId), { query: { week_start: monday } }),
       api("/awards", { query: { as: "picker" } }),
       api("/lookups"),
       api("/tasks"),
-    ]);
+    ];
+    if (isAdmin) {
+      requests.push(api("/people"));
+    }
+    const [week, picker, lookups, taskList, personList] = await Promise.all(requests);
     setWeekStart(week.week_start);
     setStatus(week.status_code);
     setReturnComment(week.return_comment || "");
@@ -117,18 +141,26 @@ export default function MyWeek() {
     setTimeCodes(lookups.time_codes || []);
     setPlanned(week.planned || []);
     setRows(rowsFromLines(week.lines, week.week_start));
+    if (personList) {
+      setPeople(personList);
+    }
   }
 
   useEffect(() => {
-    load(weekStart).catch((err) => setError(err.message));
-    // weekStart is the controlled picker; load is invoked on change via onWeekChange.
+    load(weekStart, personId).catch((err) => setError(err.message));
+    // weekStart/personId are controlled; load is invoked on change via handlers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function onWeekChange(value) {
     const monday = mondayOnOrBefore(value);
     setWeekStart(monday);
-    load(monday).catch((err) => setError(err.message));
+    load(monday, personId).catch((err) => setError(err.message));
+  }
+
+  function onPersonChange(value) {
+    setPersonId(value);
+    load(weekStart, value).catch((err) => setError(err.message));
   }
 
   function updateRow(key, patch) {
@@ -178,7 +210,7 @@ export default function MyWeek() {
     setError("");
     setNotice("");
     try {
-      const week = await api("/me/week", {
+      const week = await api(weekPath(personId), {
         method: "PUT",
         body: { week_start: weekStart, lines: payloadLines() },
       });
@@ -186,7 +218,11 @@ export default function MyWeek() {
       setReturnComment(week.return_comment || "");
       setRows(rowsFromLines(week.lines, week.week_start));
       setPlanned(week.planned || []);
-      setNotice("Saved.");
+      setNotice(
+        week.status_code === "submitted"
+          ? "Saved. The week is still in the approval queue."
+          : "Saved.",
+      );
     } catch (err) {
       setError(err.message);
     }
@@ -196,11 +232,11 @@ export default function MyWeek() {
     setError("");
     setNotice("");
     try {
-      await api("/me/week", {
+      await api(weekPath(personId), {
         method: "PUT",
         body: { week_start: weekStart, lines: payloadLines() },
       });
-      const week = await api("/me/week/submit", {
+      const week = await api(`${weekPath(personId)}/submit`, {
         method: "POST",
         query: { week_start: weekStart },
       });
@@ -217,13 +253,33 @@ export default function MyWeek() {
 
   return (
     <>
-      <h1>My week</h1>
+      <h1>{proxy ? "Team hours" : "My week"}</h1>
       <p className="muted">
         Pick each award once, then type hours under the days you worked. Leave other days blank.
         Running total is informational.
+        {isAdmin
+          ? " As admin you can enter a teammate’s week, including one they already submitted."
+          : ""}
       </p>
       <div className="card">
         <div className="row">
+          {isAdmin ? (
+            <div>
+              <label htmlFor="hours-person">Person</label>
+              <select
+                id="hours-person"
+                value={personId}
+                onChange={(event) => onPersonChange(event.target.value)}
+              >
+                {people.map((person) => (
+                  <option key={person.person_id} value={person.person_id}>
+                    {person.display_name}
+                    {String(person.person_id) === myPersonId ? " (me)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div>
             <label htmlFor="week">Week of (Monday)</label>
             <input
@@ -420,13 +476,21 @@ export default function MyWeek() {
           </button>{" "}
           <button type="button" onClick={save}>
             Save
-          </button>{" "}
-          <button type="button" onClick={submit}>
-            Submit
           </button>
+          {status !== "submitted" ? (
+            <>
+              {" "}
+              <button type="button" onClick={submit}>
+                Submit
+              </button>
+            </>
+          ) : null}
         </p>
       ) : (
-        <p className="muted">This week is {status} and cannot be edited here.</p>
+        <p className="muted">
+          This week is {status} and cannot be edited here
+          {status === "approved" ? " until it is unapproved." : "."}
+        </p>
       )}
       {notice ? <p>{notice}</p> : null}
       {error ? <p className="error">{error}</p> : null}
