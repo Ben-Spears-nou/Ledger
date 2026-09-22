@@ -462,6 +462,15 @@ def home_board(session: Session, *, as_of: str | None) -> HomeOut:
                 remaining_approved_cents=(remaining.remaining_approved_cents if remaining else 0),
                 remaining_funded_cents=remaining.remaining_funded_cents if remaining else 0,
                 runway_days=burn.runway_days if burn else None,
+                days_to_pop_end=burn.days_to_pop_end,
+                runway_gap_days=(
+                    burn.runway_days - burn.days_to_pop_end
+                    if burn.runway_days is not None
+                    else None
+                ),
+                daily_burn_cents=burn.daily_burn_cents,
+                eac_cents=burn.eac_cents,
+                pop_end=award.pop_end,
                 alert_codes=alerts_by_award.get(award.award_id, []),
                 next_compliance_due=next_item.due_date if next_item else None,
                 next_compliance_title=next_item.title if next_item else None,

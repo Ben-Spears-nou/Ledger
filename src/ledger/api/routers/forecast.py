@@ -121,13 +121,14 @@ def delete_pipeline_item(
 def get_award_burn(
     award_id: int,
     as_of: str | None = Query(default=None),
+    window_days: int = Query(default=90),
     session: Session = Depends(get_db),
     _admin: UserAccount = Depends(require_admin),
 ) -> AwardBurnOut:
-    """Monthly actuals, EAC, and runway."""
+    """Integrated actual, plan, funding, EAC, and runway forecast."""
     try:
         award = require_award(session, award_id)
-        return award_burn(session, award, as_of=as_of)
+        return award_burn(session, award, as_of=as_of, window_days=window_days)
     except (PipelineError, BurnError) as exc:
         raise _http(exc, not_found=str(exc) == "award not found") from exc
 

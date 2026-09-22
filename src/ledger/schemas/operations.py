@@ -82,6 +82,11 @@ class PortfolioRowOut(BaseModel):
     remaining_approved_cents: int
     remaining_funded_cents: int
     runway_days: int | None = None
+    days_to_pop_end: int
+    runway_gap_days: int | None = None
+    daily_burn_cents: int = 0
+    eac_cents: int = 0
+    pop_end: str
     alert_codes: list[str] = Field(default_factory=list)
     next_compliance_due: str | None = None
     next_compliance_title: str | None = None

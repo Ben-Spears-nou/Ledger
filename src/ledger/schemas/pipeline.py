@@ -46,6 +46,29 @@ class BurnMonthOut(BaseModel):
     actual_cents: int
 
 
+class ForecastMonthOut(BaseModel):
+    """One month on the integrated burn and runway forecast."""
+
+    year_month: str
+    actual_cents: int = 0
+    cumulative_actual_cents: int = 0
+    planned_cents: int | None = None
+    commitment_cents: int = 0
+    funding_expected_cents: int = 0
+    projected_cumulative_cents: int = 0
+
+
+class BurnWindowOut(BaseModel):
+    """Burn rate computed over one trailing calendar-day window."""
+
+    days: int
+    window_start: str
+    window_end: str
+    actual_cents: int
+    daily_burn_cents: int
+    monthly_rate_cents: int
+
+
 class AwardBurnOut(BaseModel):
     """Monthly burn plus integer EAC and runway (D33)."""
 
@@ -57,11 +80,18 @@ class AwardBurnOut(BaseModel):
     window_end: str
     window_actual_cents: int
     window_days: int
+    selected_window_days: int
     daily_burn_cents: int
     days_to_pop_end: int
     eac_cents: int
     runway_days: int | None
+    approved_ceiling_cents: int
+    funded_ceiling_cents: int
+    committed_cents: int
+    runway_end: str | None = None
+    windows: list[BurnWindowOut] = Field(default_factory=list)
     months: list[BurnMonthOut] = Field(default_factory=list)
+    forecast_months: list[ForecastMonthOut] = Field(default_factory=list)
 
 
 class AlertOut(BaseModel):

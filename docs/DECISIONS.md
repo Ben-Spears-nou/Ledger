@@ -550,15 +550,24 @@ Monthly burn is `SUM(charge.amount_cents)` by `award_id` and
 
 As-of a date (default today):
 
-- Window is 90 days ending on `as_of`, not before `pop_start`.
+- Selectable trailing windows are 30, 60, or 90 days ending on `as_of`,
+  never before `pop_start`; 90 remains the default.
 - `daily_burn_cents` = window actuals // days in window (truncate).
 - `eac_cents` = actual-to-date + `daily_burn_cents` × days from `as_of`
   through `pop_end` (0 days if `as_of` is after `pop_end`).
 - `runway_days` = `remaining_approved_cents` // `daily_burn_cents`, or
   null when daily burn is 0.
 
-This is management projection, not EVM (no BCWS/SPI/CPI). No float. No
-email. Employees 403.
+The award forecast displays cumulative actual and projected burn against
+approved and funded ceilings, monthly actuals, assignment-based loaded
+labor plan, open commitments by expected/effective month, and expected
+funding increments. Plans, commitments, and expected funding remain
+separate series: none silently changes actuals or remaining. The portfolio
+compares financial runway with days to PoP end.
+
+This is management projection, not EVM (no BCWS/SPI/CPI). Assignment
+costs use the dated rate stack and assignment overlap in each calendar
+month. No float. No email. Employees 403.
 
 ---
 

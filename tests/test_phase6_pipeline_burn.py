@@ -107,6 +107,18 @@ def test_monthly_burn_and_eac(client: TestClient) -> None:
     award = _award(
         client, admin, short_code="P6B", type_code="CPFF", template="CPFF_SBIR", oh_pct=3000
     )
+    _employee_token, person_id = _employee(client, admin, "p6planner")
+    assignment = client.post(
+        "/assignments",
+        json={
+            "person_id": person_id,
+            "award_id": award["award_id"],
+            "hours_per_month": 10,
+            "effective_from": "2026-01-01",
+        },
+        headers=auth_header(admin),
+    )
+    assert assignment.status_code == 201, assignment.text
     _post_actual(client, admin, award["award_id"], 6_000, "2026-01-05")
     _post_actual(client, admin, award["award_id"], 4_000, "2026-04-02")
     burn = client.get(
@@ -122,14 +134,56 @@ def test_monthly_burn_and_eac(client: TestClient) -> None:
     assert body["daily_burn_cents"] == 600
     assert body["days_to_pop_end"] == 355
     assert body["eac_cents"] == 6_000 + 600 * 355
-    later = client.get(
-        f"/awards/{award['award_id']}/burn",
-        params={"as_of": "2026-04-30"},
+    assert body["selected_window_days"] == 90
+    assert [row["days"] for row in body["windows"]] == [30, 60, 90]
+    assert body["approved_ceiling_cents"] > 0
+    assert body["funded_ceiling_cents"] > 0
+    january = next(row for row in body["forecast_months"] if row["year_month"] == "2026-01")
+    assert january["actual_cents"] == 6_000
+    assert january["cumulative_actual_cents"] == 6_000
+    assert january["projected_cumulative_cents"] == 6_000 + 600 * 21
+    assert january["planned_cents"] > 0
+
+    funding = client.post(
+        f"/awards/{award['award_id']}/funding-expectations",
+        json={"expected_date": "2026-09-01", "amount_cents": 500_000},
         headers=auth_header(admin),
     )
-    months = {row["year_month"]: row["actual_cents"] for row in later.json()["months"]}
+    assert funding.status_code == 201, funding.text
+    commitment = client.post(
+        "/purchases",
+        json={
+            "award_id": award["award_id"],
+            "category_code": "equipment",
+            "amount_cents": 250_000,
+            "description": "forecast commitment",
+            "effective_date": "2026-08-01",
+            "expected_date": "2026-09-15",
+        },
+        headers=auth_header(admin),
+    )
+    assert commitment.status_code == 201, commitment.text
+    later = client.get(
+        f"/awards/{award['award_id']}/burn",
+        params={"as_of": "2026-04-30", "window_days": 30},
+        headers=auth_header(admin),
+    )
+    later_body = later.json()
+    months = {row["year_month"]: row["actual_cents"] for row in later_body["months"]}
     assert months["2026-01"] == 6_000
     assert months["2026-04"] == 4_000
+    assert later_body["selected_window_days"] == 30
+    september = next(row for row in later_body["forecast_months"] if row["year_month"] == "2026-09")
+    assert september["funding_expected_cents"] == 500_000
+    assert september["commitment_cents"] == 250_000
+    assert (
+        client.get(
+            f"/awards/{award['award_id']}/burn",
+            params={"window_days": 45},
+            headers=auth_header(admin),
+        ).status_code
+        == 400
+    )
 
 
 def test_burn_ceiling_and_pop_alerts(client: TestClient) -> None:
